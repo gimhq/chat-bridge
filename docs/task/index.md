@@ -35,3 +35,5 @@ Each task is a single line linking to its detail file. All detailed information 
 - [x] [**20260913-0151-telegram-matrix-hardening Harden the Telegram and Matrix adapters**](20260913-0151-telegram-matrix-hardening.md) `P1`
 - [x] [**20260913-0252-bridgev2-host-signal Host mautrix bridgev2 network connectors; spike with Signal**](20260913-0252-bridgev2-host-signal.md) `P2`
 - [-] [**20260913-0530-api-framework-completion Complete the bridge API framework against api.md**](20260913-0530-api-framework-completion.md) `P1`
+- [x] [**20260913-1903-web-ui-and-requests Embedded web UI; requests (invites, calls)**](20260913-1903-web-ui-and-requests.md) `P1`
+- [x] [**20260913-2034-ignore-call-requests Ignore calls instead of rejecting them**](20260913-2034-ignore-call-requests.md) `P1`

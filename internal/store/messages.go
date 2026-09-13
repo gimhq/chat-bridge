@@ -311,6 +311,9 @@ func (s *Store) decorate(ctx context.Context, msgs []Stored) error {
 			}
 		}
 	}
+	if err := s.decoratePersons(ctx, msgs); err != nil {
+		return err
+	}
 	ph := strings.TrimSuffix(strings.Repeat("?,", len(msgs)), ",")
 	rows, err := s.q.QueryContext(ctx, `SELECT message_seq, sender_id, emoji FROM reactions WHERE message_seq IN (`+ph+`) ORDER BY ts`, args...)
 	if err != nil {

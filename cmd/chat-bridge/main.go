@@ -23,6 +23,7 @@ import (
 	"gimhq/chat-bridge/internal/media"
 	"gimhq/chat-bridge/internal/server"
 	"gimhq/chat-bridge/internal/store"
+	"gimhq/chat-bridge/internal/webui"
 )
 
 // version is set at build time via -ldflags "-X main.version=...".
@@ -66,8 +67,9 @@ func run() error {
 
 	c := core.New(core.Options{
 		Store: st, Blobs: blobs, DataDir: cfg.Storage.DataDir, Logger: log,
-		Media:          core.MediaPolicy{AutoDownload: cfg.Media.AutoDownload, MaxBytes: cfg.Media.AutoDownloadMaxMB << 20},
-		EventRetention: time.Duration(cfg.Events.RetentionDays) * 24 * time.Hour,
+		Media:           core.MediaPolicy{AutoDownload: cfg.Media.AutoDownload, MaxBytes: cfg.Media.AutoDownloadMaxMB << 20},
+		EventRetention:  time.Duration(cfg.Events.RetentionDays) * 24 * time.Hour,
+		AutoLinkByPhone: cfg.Persons.AutoLinkByPhone,
 	})
 	c.Register(whatsapp.New(log.With("adapter", "whatsapp")))
 	c.Register(telegram.New(log.With("adapter", "telegram"), telegram.Defaults{AppID: cfg.Adapters.Telegram.APIID, AppHash: cfg.Adapters.Telegram.APIHash}))
@@ -89,6 +91,7 @@ func run() error {
 		Addr: cfg.Server.Addr,
 		Handler: server.New(server.Options{
 			Core: c, Token: cfg.Server.Token, Version: version, MaxUploadBytes: cfg.Media.MaxUploadMB << 20, Logger: log, AdapterHub: hub,
+			UI: webui.FS(),
 		}),
 		ReadHeaderTimeout: 10 * time.Second,
 	}

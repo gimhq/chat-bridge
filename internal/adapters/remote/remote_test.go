@@ -466,3 +466,65 @@ func TestRemoteAdapterPhaseAMethods(t *testing.T) {
 		t.Fatalf("self.update params: %s", got[4])
 	}
 }
+
+func TestRemoteAdapterRequests(t *testing.T) {
+	c, srv := newEnv(t)
+	ctx := context.Background()
+	cl := dial(t, srv)
+	hello := map[string]any{"protocol": 1, "platform": "signal", "adapter": map[string]string{"name": "sig-py", "version": "0.1"},
+		"capabilities": []string{"send.text"}, "login_flows": []map[string]string{{"id": "qr", "name": "QR"}}}
+	raw, _ := json.Marshal(hello)
+	cl.send(rpcMessage{ID: json.RawMessage("1"), Method: "hello", Params: raw})
+	if _, _, err := cl.conn.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	go cl.loop()
+	eventually(t, func() bool {
+		for _, p := range c.Platforms() {
+			if p.ID == "signal" {
+				return true
+			}
+		}
+		return false
+	})
+	var answered []string
+	cl.handlers["account.add"] = func(json.RawMessage) (any, *rpcError) { return map[string]any{}, nil }
+	cl.handlers["contact.list"] = func(json.RawMessage) (any, *rpcError) { return map[string]any{"contacts": []model.Contact{}}, nil }
+	cl.handlers["request.answer"] = func(p json.RawMessage) (any, *rpcError) {
+		answered = append(answered, string(p))
+		return map[string]any{}, nil
+	}
+	if _, err := c.CreateAccount(ctx, "sig1", "signal", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	cl.expect("account.add")
+	cl.send(rpcMessage{ID: json.RawMessage("2"), Method: "status", Params: mustJSON(map[string]any{"account_id": "sig1", "status": "connected",
+		"self": model.Contact{ID: "+10000", Handle: "+10000"}})})
+	eventually(t, func() bool { a, _ := c.GetAccount(ctx, "sig1"); return a.Status == model.StatusConnected })
+
+	// A request event over the wire becomes a pending request; answering reaches the adapter.
+	cl.send(rpcMessage{ID: json.RawMessage("3"), Method: "events", Params: mustJSON(map[string]any{"account_id": "sig1", "events": []map[string]any{{
+		"kind": "request", "request": map[string]any{"key": "call:9", "kind": "call", "from": map[string]any{"id": "+2", "name": "Bob"},
+			"chat": map[string]any{"id": "+2", "kind": "direct"}, "call_kind": "video", "platform_ref": map[string]any{"call": 9}}}}})})
+	var reqID string
+	eventually(t, func() bool {
+		list, _, _ := c.ListRequests(ctx, "sig1", store.RequestFilter{}, "", 10)
+		if len(list) == 1 && list[0].Call != nil && list[0].Call.Kind == "video" && list[0].From.Name == "Bob" {
+			reqID = list[0].ID
+			return true
+		}
+		return false
+	})
+	if _, err := c.AnswerRequest(ctx, "sig1", reqID, model.ActionReject, "busy"); err != nil {
+		t.Fatal(err)
+	}
+	if len(answered) != 1 || !strings.Contains(answered[0], `"request_key":"call:9"`) || !strings.Contains(answered[0], `"platform_ref":{"call":9}`) ||
+		!strings.Contains(answered[0], `"action":"reject"`) {
+		t.Fatalf("request.answer params: %v", answered)
+	}
+	// A malformed request event is rejected as invalid params.
+	resp := cl.call("events", map[string]any{"account_id": "sig1", "events": []map[string]any{{"kind": "request", "request": map[string]any{"kind": "call"}}}})
+	if resp.Error == nil || resp.Error.Code != codeInvalidParams {
+		t.Fatalf("malformed request event: %+v", resp)
+	}
+}

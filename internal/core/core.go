@@ -110,20 +110,23 @@ type Options struct {
 	Media   MediaPolicy
 	// EventRetention bounds the event log; zero means 7 days.
 	EventRetention time.Duration
+	// AutoLinkByPhone joins contacts that share a phone across accounts into one person.
+	AutoLinkByPhone bool
 }
 
 // Core is the service layer behind the HTTP API.
 type Core struct {
-	st       *store.Store
-	blobs    *media.Blobs
-	dataDir  string
-	log      *slog.Logger
-	policy   MediaPolicy
-	retain   time.Duration
-	amu      sync.RWMutex
-	adapters map[string]adapter.Adapter
-	bus      *bus
-	httpc    *http.Client
+	autoLinkPhone bool
+	st            *store.Store
+	blobs         *media.Blobs
+	dataDir       string
+	log           *slog.Logger
+	policy        MediaPolicy
+	retain        time.Duration
+	amu           sync.RWMutex
+	adapters      map[string]adapter.Adapter
+	bus           *bus
+	httpc         *http.Client
 
 	mu     sync.Mutex
 	logins map[string]*loginState
@@ -138,7 +141,8 @@ func New(opts Options) *Core {
 	}
 	return &Core{
 		st: opts.Store, blobs: opts.Blobs, dataDir: opts.DataDir, log: opts.Logger, policy: opts.Media, retain: opts.EventRetention,
-		adapters: map[string]adapter.Adapter{}, bus: newBus(), httpc: &http.Client{Timeout: 10 * time.Second},
+		autoLinkPhone: opts.AutoLinkByPhone,
+		adapters:      map[string]adapter.Adapter{}, bus: newBus(), httpc: &http.Client{Timeout: 10 * time.Second},
 		logins: map[string]*loginState{}, stopCh: make(chan struct{}),
 	}
 }

@@ -79,6 +79,7 @@ type Contact struct {
 	IsSelf    bool            `json:"is_self"`
 	IsContact bool            `json:"is_contact"`
 	Blocked   bool            `json:"blocked"`
+	PersonID  string          `json:"person_id,omitempty"`
 	UpdatedAt time.Time       `json:"updated_at"`
 	Raw       json.RawMessage `json:"raw,omitempty"`
 }
@@ -111,6 +112,7 @@ type Chat struct {
 	Tags             []string        `json:"tags"`
 	PinnedMessageIDs []string        `json:"pinned_message_ids"`
 	EphemeralTTL     *int64          `json:"ephemeral_ttl_s"`
+	PersonID         string          `json:"person_id,omitempty"`
 	Participants     []Participant   `json:"participants,omitempty"`
 	Raw              json.RawMessage `json:"raw,omitempty"`
 	UpdatedAt        time.Time       `json:"-"`
@@ -129,6 +131,7 @@ type Sender struct {
 	ID       string `json:"id"`
 	Name     string `json:"name,omitempty"`
 	ChatName string `json:"chat_name,omitempty"`
+	PersonID string `json:"person_id,omitempty"`
 }
 
 // Outbound message status values.
@@ -371,6 +374,9 @@ const (
 	EvAccountStatus   = "account.status"
 	EvLoginStep       = "account.login_step"
 	EvPlatform        = "platform.event"
+	EvRequestNew      = "request.new"
+	EvRequestUpdated  = "request.updated"
+	EvPersonUpdated   = "person.updated"
 )
 
 // Event is the envelope on /events and webhooks.
@@ -412,6 +418,121 @@ type KeyVerifyResult struct {
 	CrossSigned      bool   `json:"cross_signed"`
 	BackupVersion    string `json:"backup_version,omitempty"`
 	SessionsImported int    `json:"sessions_imported"`
+}
+
+// Request kinds (api.md §4.8).
+const (
+	RequestKindContact    = "contact_request"
+	RequestKindChatInvite = "chat_invite"
+	RequestKindJoin       = "join_request"
+	RequestKindCall       = "call"
+)
+
+// Request states.
+const (
+	RequestPending  = "pending"
+	RequestAccepted = "accepted"
+	RequestRejected = "rejected"
+	RequestExpired  = "expired"
+	// RequestIgnored closes a request in the bridge only; the platform is never told.
+	RequestIgnored = "ignored"
+)
+
+// Request answers.
+const (
+	ActionAccept = "accept"
+	ActionReject = "reject"
+	ActionIgnore = "ignore"
+)
+
+// Request is something the platform waits on the owner to answer: an invite, a join request, a call.
+type Request struct {
+	ID         string          `json:"id"`
+	AccountID  string          `json:"account_id"`
+	Kind       string          `json:"kind"`
+	State      string          `json:"state"`
+	From       *Sender         `json:"from"`
+	Chat       *RequestChat    `json:"chat"`
+	Message    string          `json:"message,omitempty"`
+	Call       *CallInfo       `json:"call,omitempty"`
+	Actions    []string        `json:"actions"`
+	CreatedAt  time.Time       `json:"created_at"`
+	ExpiresAt  *time.Time      `json:"expires_at"`
+	AnsweredAt *time.Time      `json:"answered_at"`
+	Raw        json.RawMessage `json:"raw,omitempty"`
+}
+
+// RequestChat names the chat a request is about.
+type RequestChat struct {
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	Kind string `json:"kind,omitempty"`
+}
+
+// CallInfo describes an incoming call request.
+type CallInfo struct {
+	Kind string `json:"kind"` // voice|video
+}
+
+// FillActions sets the answers a client should offer. Calls are only ignored: rejecting one from
+// the bridge hangs up on every device of the account, so it is not offered (the reject endpoint
+// still works for callers that want exactly that). Answered requests offer nothing.
+func (r *Request) FillActions() {
+	switch {
+	case r.State != RequestPending:
+		r.Actions = []string{}
+	case r.Kind == RequestKindCall:
+		r.Actions = []string{ActionIgnore}
+	default:
+		r.Actions = []string{ActionAccept, ActionReject, ActionIgnore}
+	}
+}
+
+// Person link sources.
+const (
+	LinkManual = "manual"
+	LinkPhone  = "phone"
+)
+
+// Person is a bridge-local identity grouping one human's contacts across accounts (api.md §3.8).
+// It never reaches a platform and never changes routing.
+type Person struct {
+	ID        string          `json:"id"`
+	Name      string          `json:"name"`
+	Tags      []string        `json:"tags"`
+	Notes     string          `json:"notes"`
+	Links     []PersonLink    `json:"links"`
+	Channels  []PersonChannel `json:"channels"`
+	CreatedAt time.Time       `json:"created_at"`
+	UpdatedAt time.Time       `json:"updated_at"`
+}
+
+// PersonLink is one contact that belongs to a person; name, handle, phone and platform describe
+// the contact as the account sees it.
+type PersonLink struct {
+	AccountID string    `json:"account_id"`
+	UserID    string    `json:"user_id"`
+	Platform  string    `json:"platform,omitempty"`
+	Name      string    `json:"name,omitempty"`
+	Handle    string    `json:"handle,omitempty"`
+	Phone     string    `json:"phone,omitempty"`
+	Source    string    `json:"source"`
+	LinkedAt  time.Time `json:"linked_at"`
+}
+
+// PersonChannel is the direct chat with a linked contact, for choosing where to reply.
+type PersonChannel struct {
+	AccountID     string     `json:"account_id"`
+	UserID        string     `json:"user_id"`
+	ChatID        string     `json:"chat_id"`
+	Name          string     `json:"name,omitempty"`
+	LastMessageAt *time.Time `json:"last_message_at"`
+}
+
+// PersonSuggestion groups unlinked contacts on different accounts that look like one human.
+type PersonSuggestion struct {
+	Contacts []PersonLink `json:"contacts"`
+	Reason   string       `json:"reason"`
 }
 
 // ResolvedChat is the result of chat.resolve.

@@ -120,6 +120,7 @@ const (
 	EvTyping        = "typing"
 	EvPresence      = "presence"
 	EvPlatform      = "platform_event"
+	EvRequest       = "request"
 )
 
 // Event is one adapter-side occurrence. Which fields apply depends on Kind.
@@ -156,6 +157,28 @@ type Event struct {
 
 	// platform_event.
 	PlatformType string
+
+	// request.
+	Request *Request
+}
+
+// Request is an invite, join request, or call waiting for the owner. Key is stable per account
+// so the adapter can re-emit the same request with a new State (accepted on another device, call
+// ended) or better names; State empty means pending.
+type Request struct {
+	Key         string
+	Kind        string
+	State       string
+	FromID      string
+	FromName    string
+	ChatID      string
+	ChatName    string
+	ChatKind    string
+	Message     string
+	CallKind    string // voice|video, calls only
+	PlatformRef json.RawMessage
+	CreatedAt   time.Time
+	ExpiresAt   *time.Time
 }
 
 // Member is a chat membership change.
@@ -318,4 +341,21 @@ type SelfUpdater interface {
 // built-in adapter implements it; the core answers unsupported otherwise.
 type Blocker interface {
 	Block(ctx context.Context, id, userID string, blocked bool) error
+}
+
+// RequestAnswer is what the core hands AnswerRequest: the stored request plus the owner's action.
+type RequestAnswer struct {
+	Kind        string
+	Key         string
+	ChatID      string
+	FromID      string
+	PlatformRef json.RawMessage
+	Action      string // accept|reject
+	Reason      string
+}
+
+// RequestAnswerer answers invites, join requests, and calls on the platform. No capability: the
+// core offers the actions a request kind allows whenever the adapter implements it.
+type RequestAnswerer interface {
+	AnswerRequest(ctx context.Context, id string, a RequestAnswer) error
 }

@@ -41,6 +41,8 @@ type Adapter struct {
 	SelfUpdates []adapter.SelfUpdate
 	Blocked     []string
 	History     map[string][]model.Message
+	Answered    []adapter.RequestAnswer
+	FailAnswer  error
 }
 
 // New returns an adapter with no accounts.
@@ -301,5 +303,15 @@ func (a *Adapter) Block(_ context.Context, _, userID string, blocked bool) error
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.Blocked = append(a.Blocked, fmt.Sprintf("%s:%t", userID, blocked))
+	return nil
+}
+
+func (a *Adapter) AnswerRequest(_ context.Context, _ string, ans adapter.RequestAnswer) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.FailAnswer != nil {
+		return a.FailAnswer
+	}
+	a.Answered = append(a.Answered, ans)
 	return nil
 }

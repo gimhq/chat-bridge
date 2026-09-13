@@ -41,3 +41,9 @@ tmp/
 # OS
 .DS_Store
 Thumbs.db
+
+# web UI
+web/node_modules/
+web/coverage/
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep

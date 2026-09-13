@@ -162,7 +162,7 @@ All take `{"account_id": "…", ...}`. Errors use JSON-RPC `error.code`:
 | `keys.verify` | `{account_id, recovery_key}` | `KeyVerifyResult` | `keys.manage` |
 | `keys.export` | `{account_id, passphrase}` | `{data}` (base64 of the key file) | `keys.manage` |
 | `keys.import` | `{account_id, passphrase, data}` (base64) | `{sessions_imported}` | `keys.manage` |
-| `request.answer` | `{account_id, request_id, platform_ref, action: "accept"\|"reject", alias?, reason?}` | `{}` | `contact.request` etc. |
+| `request.answer` | `{account_id, request_key, kind, chat_id, from_id, platform_ref, action: "accept"\|"reject", reason?}` | `{}` — `request_key` and `platform_ref` are what the adapter emitted | (none; the core offers the actions the request kind allows) |
 
 `message.send` content arrives exactly as the consumer posted it (§3.5 of the API spec), with
 each attachment already expanded to `{media_id, mime, size, file_name, sha256}`; the adapter
@@ -201,8 +201,8 @@ on one connection is preserved per account.
   {"kind": "chat", "chat": { Chat }},
   {"kind": "member", "chat_id": "…", "user_id": "…", "chat_name": "…", "role": "member", "left": false},
   {"kind": "contact", "contact": { Contact }},
-  {"kind": "request", "request": { Request minus id, "platform_ref": {…} }},
-  {"kind": "request_update", "platform_ref": {…}, "state": "accepted"},
+  {"kind": "request", "request": {"key": "call:42", "kind": "call", "from": {"id": "…", "name": "…"}, "chat": {"id": "…"}, "call_kind": "voice", "platform_ref": {…}}},
+  {"kind": "request", "request": {"key": "call:42", "kind": "call", "state": "expired"}},
   {"kind": "typing", "chat_id": "…", "user_id": "…", "state": "typing"},
   {"kind": "presence", "user_id": "…", "state": "online", "last_seen": null},
   {"kind": "platform_event", "platform_type": "updateBotStopped", "chat_id": null, "user_id": "…", "raw": {…}}
@@ -230,6 +230,17 @@ Rules for the adapter:
   platform's authoritative value instead. Contacts that arrive incrementally after first login
   (WhatsApp app-state sync, push-name chunks) are re-emitted as `contact` batches when the
   platform signals the sync finished.
+
+#### `request` events
+
+`{"kind": "request", "request": {key, kind, state?, from?: {id, name?}, chat?: {id, name?, kind?}, message?, call_kind?, platform_ref?, created_at?, expires_at?}}`
+reports something the owner can answer (`api.md` §4.8). `key` is stable per account: emitting
+the same key again updates names and expiry, or resolves the request with `state: "accepted" |
+"rejected" | "expired"` when it was answered on another device or the call ended. A request whose
+first sighting is already terminal is ignored, and a terminal request is only reopened by a
+later `created_at` (a new invite to the same room). `platform_ref` is opaque JSON the adapter needs
+to answer; the core hands it back in `request.answer`. A `request` event without `key` or `kind`
+is rejected with `-32602`.
 
 ### 5.4 `media.ready` / `media.failed`
 
@@ -336,6 +347,7 @@ type Adapter interface {
 //   SelfUpdater UpdateSelf(ctx, id, SelfUpdate{Name, Bio, AvatarMediaID, Media}) (Contact, error) [self.update]
 //   Blocker     Block(ctx, id, userID, blocked) error                                   (none)
 //   KeyManager  KeysStatus / KeysVerify / KeysExport / KeysImport                        [keys.manage]
+//   RequestAnswerer AnswerRequest(ctx, id, RequestAnswer{Kind, Key, ChatID, FromID, PlatformRef, Action, Reason}) error (none)
 
 // Sink is what the core hands the adapter; every method is durable when it returns.
 type Sink interface {
@@ -348,7 +360,7 @@ type Sink interface {
 
 Optional capabilities are separate interfaces the core type-asserts (listed above);
 `Info().Capabilities` must agree with what is implemented. Interfaces without a capability
-(`ChatUpdater`, `Blocker`) are used whenever present and answer `422 unsupported` otherwise.
+(`ChatUpdater`, `Blocker`, `RequestAnswerer`) are used whenever present and answer `422 unsupported` otherwise.
 
 The remote-adapter shim implements `Adapter` by forwarding to JSON-RPC and implements `Sink`
 handling on the receiving side; it is the only place the wire format exists in the core.

@@ -122,4 +122,7 @@ func (c *Core) gcOnce() {
 	if err := c.st.PruneEvents(ctx, now, c.retain); err != nil {
 		c.log.Warn("gc events", "err", err)
 	}
+	if err := c.expireRequests(ctx, now); err != nil {
+		c.log.Warn("gc requests", "err", err)
+	}
 }

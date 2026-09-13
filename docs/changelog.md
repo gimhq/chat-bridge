@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-09-13 20:37 [progress]
+
+Task `20260913-2034-ignore-call-requests`: calls are ignored instead of rejected.
+
+- Rejecting a call from the bridge hung up on every device of the account (WhatsApp `RejectCall`, Telegram `phone.discardCall`, Matrix `m.call.reject`), so the owner could not answer on the phone
+- New action `ignore` and state `ignored`: `POST /accounts/{a}/requests/{id}/ignore` closes the request in the bridge only, without contacting the platform or needing a connected account; the adapter's later "call ended" update does not overwrite it
+- `actions` is now `["ignore"]` for calls and `["accept", "reject", "ignore"]` for other pending requests; `POST …/reject` still works for calls and is documented as hanging up everywhere
+- Web UI: the request list offers 忽略 (no reject button for calls) and the incoming-call toast's action is 忽略
+- Tests: store, core (ignore never calls the adapter), server route, Vitest request list, Playwright smoke (the call is ignored and no `request.answer` reaches the adapter; the toast offers ignore); `api.md` §4.8 updated
+
+## 2026-09-13 20:32 [progress]
+
+Task `20260913-0530-api-framework-completion` Phase B (plan of the same id): Persons, a bridge-local identity over contacts on several accounts (`api.md` §3.8, §4.7).
+
+- Store: schema v5 — `persons`, `person_links` (a contact belongs to at most one person), `person_unlinks` (pairs the owner split), `contacts.phone_norm` (digits only, at least 7, indexed, backfilled); `person_id` joined at read time on Contact, direct Chat (chat id is the counterpart, or the counterpart is the other member for Matrix rooms) and message `sender`
+- Core / API: `GET|POST /persons`, `GET|PATCH|DELETE /persons/{p}`, `POST /persons/{p}/links`, `DELETE /persons/{p}/links/{account}/{user}`, `POST /persons/{p}/merge`, `GET /persons/{p}/chats`, `GET /persons/{p}/messages?scope=direct|all` (merged across accounts, cursor paged), `GET /persons/suggest`; `person=` on `/accounts/{a}/chats`, `/events` and `/events/stream`; `person.updated` (with `deleted` / `merged_into`) plus `contact.updated` for contacts whose `person_id` changed; linking a contact that belongs to another person is `409`
+- Auto-link by phone (`persons.auto_link_by_phone`, default on): whenever a contact row changes (contact events, message sender hints, address-book sync), other accounts' non-self contacts with the same phone are matched; one person involved → join it, none → create one with all of them, several → leave to suggestions; split pairs are never re-joined
+- Web UI: "人" page (search, tag filter, phone-match suggestions with one-click grouping, create), person detail (linked identities with unlink, direct-chat channels, notes, merged timeline with direct / all scope, edit, merge, delete), "link to person" and a person column on the contacts page, "view this person" in the chat header
+- Tests: store (phone normalisation, split pairs, suggestions, Matrix-style DM person, person messages paging, merge, delete), core (auto-link across two accounts, split pair, conflict, merge, person event filter, delete events), server routes, config env override; Vitest 39 tests; Playwright smoke 14/14 with a new check that two accounts sharing a phone become one person, show a merged timeline and unlink from the UI
+
+## 2026-09-13 19:53 [progress]
+
+Task `20260913-1903-web-ui-and-requests` (plan of the same id): embedded management web UI; requests for invites and calls.
+
+- Requests (`api.md` §4.8): schema v4 `requests` keyed by the adapter's stable key; `Request` carries `actions` (`["reject"]` for calls, `["accept","reject"]` otherwise); `GET /accounts/{a}/requests[/{id}]`, `POST …/accept|reject` (`409` unless pending, `400` accepting a call); `request.new` / `request.updated`; pending requests expire in the GC loop; `AccountStats.requests_pending`
+- Adapter contract: event kind `request` (re-emitting a key updates names or resolves the request; a first sighting that is already terminal is ignored; a later `created_at` reopens), optional `RequestAnswerer`, wire method `request.answer`
+- Adapters: WhatsApp incoming calls (reject) and group invite messages (accept joins, reject dismisses locally); Telegram incoming calls (discard as busy) and join requests to owned groups (approve / dismiss); Matrix room invites (join / leave; invite state no longer creates chat rows) and `m.call.invite` (`m.call.reject`, `m.call.hangup` for VoIP v0); hosted Signal has no request source
+- Web UI in `web/` (React 19, Vite 8, TanStack Router and Query, Tailwind v4, shadcn/ui base-nova on Base UI), built into `internal/webui/dist`, embedded with `go:embed` and served at `/ui/` with SPA fallback, immutable asset caching and a strict CSP; pages for accounts (create from the platform config schema, login wizard, reconnect / logout / delete, profile), chats (list, archive, mute, create and rename groups, search), the timeline (media via authorized blob fetch, replies, reactions, retract, send text and files, older history), contacts (alias, block, open chat), requests (accept / reject, toast with a reject action for calls), live events and system (status, platforms, webhooks); the event stream is read with `fetch` from the current cursor so the token never goes into a URL
+- Build and tooling: Dockerfile bun stage builds the UI before `go build`; `web/go.mod` stub keeps `web/node_modules` out of `./...`; TypeScript pinned to 6.0 for typescript-eslint (`docs/decisions/2026-09-13-web-typescript-6.md`); nsl for the web dev loop only; web gate added to AGENTS and README
+- Fixed during verification: shadcn init wired `cn` to an unrelated npm package named `cn`; ESLint autofix escaped quotes inside Tailwind arbitrary variants (button icons lost their size) and dropped spaces in mixed JSX text; the live stream replayed retained history and re-toasted old requests on every load
+- Tests: Go store / core / server / remote request lifecycle and adapter conversion tests; Vitest 35 tests (45% statements overall, 81% for `shared/lib`); Playwright smoke in a sibling container against the real binary with a fake remote adapter: 13/13 checks (sign-in, accounts, chat send and mark read, reject call and accept invite, live toast, events, system, dark theme and deep links, create account with QR login, compact icons, no console errors)
+- Docker: `docker build --target test .` (Go tests with `goolm,signal`) and the full image build pass; the 161 MB runtime image serves `/ui/` with its assets and lists whatsapp, telegram, matrix and signal under `/v1/platforms`
+
 ## 2026-09-13 06:40 [progress]
 
 Task `20260913-0530-api-framework-completion` Phase A (plan of the same id): platform-backed endpoints the spec promised.

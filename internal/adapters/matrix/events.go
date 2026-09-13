@@ -109,6 +109,17 @@ func (acc *account) onMember(_ context.Context, evt *event.Event) {
 		return
 	}
 	user := id.UserID(*evt.StateKey)
+	if evt.Mautrix.EventSource&event.SourceInvite != 0 {
+		// Stripped state of a room we are only invited to: a request, not a chat.
+		if user == acc.selfID() && m.Membership == event.MembershipInvite {
+			acc.rememberInvite(evt, m)
+		}
+		return
+	}
+	var resolved *adapter.Request
+	if user == acc.selfID() {
+		resolved = acc.inviteResolution(evt, m)
+	}
 	if m.IsDirect {
 		acc.mu.Lock()
 		acc.roomKind[evt.RoomID] = model.ChatDirect
@@ -139,10 +150,19 @@ func (acc *account) onMember(_ context.Context, evt *event.Event) {
 			evs = append(evs, adapter.Event{Kind: adapter.EvMessage, Message: &msg, Chat: acc.chatHint(evt.RoomID)})
 		}
 	}
+	if resolved != nil {
+		evs = append(evs, adapter.Event{Kind: adapter.EvRequest, Request: resolved})
+	}
 	acc.rep.Events(evs...)
 }
 
 func (acc *account) onRoomName(_ context.Context, evt *event.Event) {
+	if evt.Mautrix.EventSource&event.SourceInvite != 0 {
+		if n := evt.Content.AsRoomName(); n != nil {
+			acc.inviteName(evt.RoomID, n.Name)
+		}
+		return
+	}
 	n := evt.Content.AsRoomName()
 	if n == nil {
 		return

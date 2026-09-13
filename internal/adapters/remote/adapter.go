@@ -435,3 +435,9 @@ func (a *Adapter) UpdateSelf(ctx context.Context, id string, p adapter.SelfUpdat
 func (a *Adapter) Block(ctx context.Context, id, userID string, blocked bool) error {
 	return a.call(ctx, "contact.block", map[string]any{"account_id": id, "user_id": userID, "blocked": blocked}, nil)
 }
+
+// AnswerRequest forwards request.answer; request_key is the key the adapter emitted.
+func (a *Adapter) AnswerRequest(ctx context.Context, id string, ans adapter.RequestAnswer) error {
+	return a.call(ctx, "request.answer", map[string]any{"account_id": id, "request_key": ans.Key, "kind": ans.Kind, "chat_id": ans.ChatID,
+		"from_id": ans.FromID, "platform_ref": ans.PlatformRef, "action": ans.Action, "reason": ans.Reason}, nil)
+}

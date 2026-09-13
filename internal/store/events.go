@@ -51,6 +51,15 @@ func (s *Store) AppendEvent(ctx context.Context, accountID, typ string, data any
 type EventFilter struct {
 	AccountID string
 	Types     []string
+	// Person narrows to events about one person: its own updates, and events on a linked
+	// account whose sender, user, chat or subject id is a linked contact.
+	Person *PersonScope
+}
+
+// PersonScope is a person id with its links, resolved when the filter is built.
+type PersonScope struct {
+	ID    string
+	Links []LinkRef
 }
 
 // ListEvents returns events with id > after, oldest first.
@@ -69,6 +78,16 @@ func (s *Store) ListEvents(ctx context.Context, after int64, f EventFilter, limi
 	} else {
 		where += ` AND type <> ?`
 		args = append(args, model.EvPlatform)
+	}
+	if f.Person != nil {
+		conds := []string{`(type = 'person.updated' AND json_extract(data, '$.id') = ?)`}
+		args = append(args, f.Person.ID)
+		for _, l := range f.Person.Links {
+			conds = append(conds, `(account_id = ? AND ? IN (json_extract(data, '$.sender.id'), json_extract(data, '$.sender_id'),
+				json_extract(data, '$.user_id'), json_extract(data, '$.chat_id'), json_extract(data, '$.from.id'), json_extract(data, '$.id')))`)
+			args = append(args, l.AccountID, l.UserID)
+		}
+		where += ` AND (` + strings.Join(conds, " OR ") + `)`
 	}
 	args = append(args, limit)
 	rows, err := s.q.QueryContext(ctx, `SELECT id, COALESCE(account_id,''), type, ts_ms, data FROM events WHERE `+where+` ORDER BY id LIMIT ?`, args...)

@@ -704,3 +704,268 @@ func ids(ms []model.Message) []string {
 	}
 	return out
 }
+
+func TestRequestsInvitesAndCalls(t *testing.T) {
+	c, f := newCore(t)
+	ctx := context.Background()
+	connected(t, c, f, "a1")
+	now := time.Now().UTC().Truncate(time.Second)
+	exp := now.Add(time.Hour)
+	invite := &adapter.Request{Key: "invite:g1", Kind: model.RequestKindChatInvite, FromID: "u1@fake", FromName: "Alice", ChatID: "g1@fake",
+		ChatName: "Team", ChatKind: model.ChatGroup, Message: "join us", PlatformRef: json.RawMessage(`{"code":"abc"}`), CreatedAt: now, ExpiresAt: &exp}
+	call := &adapter.Request{Key: "call:c1", Kind: model.RequestKindCall, FromID: "u2@fake", ChatID: "u2@fake", CallKind: "video", CreatedAt: now.Add(time.Second)}
+	push := func(r *adapter.Request) {
+		t.Helper()
+		cp := *r
+		if err := f.Push(ctx, "a1", adapter.Event{Kind: adapter.EvRequest, Request: &cp}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	push(invite)
+	push(call)
+	push(invite) // replay: no second request.new
+	countEvents := func(typ string) int {
+		evs, _, _ := c.ListEvents(ctx, "", store.EventFilter{Types: []string{typ}}, 100)
+		return len(evs)
+	}
+	if n := countEvents(model.EvRequestNew); n != 2 {
+		t.Fatalf("request.new events: %d", n)
+	}
+
+	list, _, err := c.ListRequests(ctx, "a1", store.RequestFilter{}, "", 10)
+	if err != nil || len(list) != 2 || list[0].Kind != model.RequestKindCall {
+		t.Fatalf("list: %+v %v", list, err)
+	}
+	callID, inviteID := list[0].ID, list[1].ID
+	got, err := c.GetRequest(ctx, "a1", inviteID)
+	if err != nil || got.From == nil || got.From.Name != "Alice" || got.Chat == nil || got.Chat.Name != "Team" || got.Message != "join us" ||
+		len(got.Actions) != 3 || got.ExpiresAt == nil {
+		t.Fatalf("invite: %+v %v", got, err)
+	}
+	if list[0].Call == nil || list[0].Call.Kind != "video" || len(list[0].Actions) != 1 || list[0].Actions[0] != model.ActionIgnore {
+		t.Fatalf("call: %+v", list[0])
+	}
+	if a, _ := c.GetAccount(ctx, "a1"); a.Stats == nil || a.Stats.RequestsPending != 2 {
+		t.Fatalf("pending stat: %+v", a.Stats)
+	}
+
+	// Ignoring a call only closes it here: the platform is not told, so other devices keep ringing.
+	ring := &adapter.Request{Key: "call:ring", Kind: model.RequestKindCall, FromID: "u5@fake", CreatedAt: now.Add(4 * time.Second)}
+	push(ring)
+	rings, _, _ := c.ListRequests(ctx, "a1", store.RequestFilter{State: model.RequestPending, Kind: model.RequestKindCall}, "", 10)
+	var ringID string
+	for _, r := range rings {
+		if r.From != nil && r.From.ID == "u5@fake" {
+			ringID = r.ID
+		}
+	}
+	answeredBefore := len(f.Answered)
+	got, err = c.AnswerRequest(ctx, "a1", ringID, model.ActionIgnore, "")
+	if err != nil || got.State != model.RequestIgnored || got.AnsweredAt == nil || len(got.Actions) != 0 || len(f.Answered) != answeredBefore {
+		t.Fatalf("ignore call: %+v %v (adapter answers %d → %d)", got, err, answeredBefore, len(f.Answered))
+	}
+	ring.State = model.RequestExpired // the caller hangs up later: an ignored request stays ignored
+	push(ring)
+	if got, _ = c.GetRequest(ctx, "a1", ringID); got.State != model.RequestIgnored {
+		t.Fatalf("ignored call overwritten: %s", got.State)
+	}
+
+	// Calls cannot be accepted; answering twice conflicts.
+	if _, err := c.AnswerRequest(ctx, "a1", callID, model.ActionAccept, ""); AsError(err).Status != http.StatusBadRequest {
+		t.Fatalf("accept call: %v", err)
+	}
+	got, err = c.AnswerRequest(ctx, "a1", callID, model.ActionReject, "busy")
+	if err != nil || got.State != model.RequestRejected || got.AnsweredAt == nil || len(got.Actions) != 0 {
+		t.Fatalf("reject call: %+v %v", got, err)
+	}
+	if len(f.Answered) != 1 || f.Answered[0].Key != "call:c1" || f.Answered[0].Action != model.ActionReject || f.Answered[0].Reason != "busy" {
+		t.Fatalf("adapter answer: %+v", f.Answered)
+	}
+	if _, err := c.AnswerRequest(ctx, "a1", callID, model.ActionReject, ""); AsError(err).Status != http.StatusConflict {
+		t.Fatalf("reject twice: %v", err)
+	}
+	if _, err := c.AnswerRequest(ctx, "a1", inviteID, "maybe", ""); AsError(err).Status != http.StatusBadRequest {
+		t.Fatalf("bad action: %v", err)
+	}
+
+	// A platform failure leaves the request pending.
+	f.FailAnswer = adapter.Errorf(adapter.ErrPlatform, "invite revoked")
+	if _, err := c.AnswerRequest(ctx, "a1", inviteID, model.ActionAccept, ""); AsError(err).Status != http.StatusBadGateway {
+		t.Fatalf("failing accept: %v", err)
+	}
+	if got, _ = c.GetRequest(ctx, "a1", inviteID); got.State != model.RequestPending {
+		t.Fatalf("state after failure: %s", got.State)
+	}
+	f.FailAnswer = nil
+	got, err = c.AnswerRequest(ctx, "a1", inviteID, model.ActionAccept, "")
+	if err != nil || got.State != model.RequestAccepted || string(f.Answered[1].PlatformRef) != `{"code":"abc"}` || f.Answered[1].ChatID != "g1@fake" {
+		t.Fatalf("accept invite: %+v %v %+v", got, err, f.Answered)
+	}
+
+	// The platform resolves a request on its own (answered on the phone) and names change.
+	other := &adapter.Request{Key: "join:g2:u3", Kind: model.RequestKindJoin, FromID: "u3@fake", ChatID: "g2@fake", CreatedAt: now.Add(2 * time.Second)}
+	push(other)
+	other.FromName = "Carol"
+	push(other)
+	other.State = model.RequestAccepted
+	push(other)
+	list, _, _ = c.ListRequests(ctx, "a1", store.RequestFilter{Kind: model.RequestKindJoin}, "", 10)
+	if len(list) != 1 || list[0].State != model.RequestAccepted || list[0].From.Name != "Carol" {
+		t.Fatalf("platform-resolved: %+v", list)
+	}
+
+	// Expiry sweep.
+	late := now.Add(-time.Minute)
+	push(&adapter.Request{Key: "call:old", Kind: model.RequestKindCall, FromID: "u4@fake", CreatedAt: now.Add(3 * time.Second), ExpiresAt: &late})
+	if err := c.expireRequests(ctx, now); err != nil {
+		t.Fatal(err)
+	}
+	list, _, _ = c.ListRequests(ctx, "a1", store.RequestFilter{State: model.RequestPending}, "", 10)
+	if len(list) != 0 {
+		t.Fatalf("pending after expiry: %+v", list)
+	}
+	if n := countEvents(model.EvRequestUpdated); n < 4 {
+		t.Fatalf("request.updated events: %d", n)
+	}
+	if _, err := c.GetRequest(ctx, "a1", "req_nope"); AsError(err).Status != http.StatusNotFound {
+		t.Fatalf("unknown request: %v", err)
+	}
+}
+
+func TestPersonsAutoLinkAndViews(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(context.Background(), filepath.Join(dir, "chatbridge.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	blobs, _ := media.Open(filepath.Join(dir, "media"))
+	c := New(Options{Store: st, Blobs: blobs, DataDir: dir, Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), AutoLinkByPhone: true})
+	f := fake.New()
+	c.Register(f)
+	if err := c.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Stop(context.Background()); _ = st.Close() })
+	ctx := context.Background()
+
+	// Both accounts know the same human by phone: one person appears on its own. The fake
+	// address book uses a too-short phone, so wait for both syncs before pushing real numbers.
+	connected(t, c, f, "a1")
+	connected(t, c, f, "a2")
+	for _, a := range []string{"a1", "a2"} {
+		eventually(t, func() bool { cs, _, _ := c.ListContacts(ctx, a, "", "", 10); return len(cs) >= 2 })
+	}
+	const phone = "+86 138 0000 0000"
+	alice := func(id, chat string) adapter.Event {
+		return adapter.Event{Kind: adapter.EvMessage,
+			Message: &model.Message{ID: id, ChatID: chat, Sender: model.Sender{ID: "u1@fake"}, Timestamp: time.Now().UTC(), Content: model.Content{Type: model.ContentText, Text: "hi " + id}},
+			Chat:    &model.Chat{ID: chat, Kind: model.ChatDirect, Name: "Alice"},
+			Sender:  &model.Contact{ID: "u1@fake", Names: model.Names{Profile: "alice"}, Phone: phone}}
+	}
+	for _, a := range []string{"a1", "a2"} {
+		if err := f.Push(ctx, a, adapter.Event{Kind: adapter.EvContact, Contact: &model.Contact{ID: "u1@fake", Phone: phone}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var p model.Person
+	eventually(t, func() bool {
+		list, _, _ := c.ListPersons(ctx, store.PersonFilter{}, "", 10)
+		if len(list) == 1 && len(list[0].Links) == 2 {
+			p = list[0]
+			return true
+		}
+		return false
+	})
+	if p.Links[0].Source != model.LinkPhone || p.Name == "" {
+		t.Fatalf("auto person: %+v", p)
+	}
+	if ct, _ := c.GetContact(ctx, "a1", "u1@fake"); ct.PersonID != p.ID {
+		t.Fatalf("contact person_id: %+v", ct)
+	}
+
+	// Messages and chats carry person_id; the person gains a channel per direct chat.
+	if err := f.Push(ctx, "a1", alice("m1", "u1@fake")); err != nil {
+		t.Fatal(err)
+	}
+	group := alice("g1", "g1@fake")
+	group.Chat = &model.Chat{ID: "g1@fake", Kind: model.ChatGroup, Name: "Team"}
+	if err := f.Push(ctx, "a2", group); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := c.GetMessage(ctx, "a1", "m1", false); m.Sender.PersonID != p.ID {
+		t.Fatalf("sender person_id: %+v", m.Sender)
+	}
+	if ch, _ := c.GetChat(ctx, "a1", "u1@fake"); ch.PersonID != p.ID {
+		t.Fatalf("chat person_id: %+v", ch)
+	}
+	got, err := c.GetPerson(ctx, p.ID)
+	if err != nil || len(got.Channels) != 1 || got.Channels[0].ChatID != "u1@fake" {
+		t.Fatalf("channels: %+v %v", got, err)
+	}
+	direct, _, _ := c.PersonMessages(ctx, p.ID, "direct", "", 10)
+	all, _, _ := c.PersonMessages(ctx, p.ID, "all", "", 10)
+	if len(direct) != 1 || len(all) != 2 {
+		t.Fatalf("person messages: direct %d all %d", len(direct), len(all))
+	}
+	if _, _, err := c.PersonMessages(ctx, p.ID, "everything", "", 10); AsError(err).Status != http.StatusBadRequest {
+		t.Fatalf("bad scope: %v", err)
+	}
+
+	// The event log can be narrowed to one person.
+	scope, err := c.PersonScope(ctx, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	evs, _, _ := c.ListEvents(ctx, "", store.EventFilter{Types: []string{model.EvMessageNew}, Person: scope}, 100)
+	if len(evs) != 2 {
+		t.Fatalf("person events: %d", len(evs))
+	}
+
+	// Unlinking a2 splits the pair: a later contact update does not re-join it.
+	got, err = c.UnlinkPerson(ctx, p.ID, store.LinkRef{AccountID: "a2", UserID: "u1@fake"})
+	if err != nil || len(got.Links) != 1 {
+		t.Fatalf("unlink: %+v %v", got, err)
+	}
+	_ = f.Push(ctx, "a2", adapter.Event{Kind: adapter.EvContact, Contact: &model.Contact{ID: "u1@fake", Phone: phone, Bio: "changed"}})
+	if ct, _ := c.GetContact(ctx, "a2", "u1@fake"); ct.PersonID != "" {
+		t.Fatalf("split contact re-linked: %+v", ct)
+	}
+
+	// Manual person, conflict, merge, patch, delete.
+	bob, err := c.CreatePerson(ctx, PersonInput{Name: "Bob", Tags: []string{"friends"}, Links: []store.LinkRef{{AccountID: "a2", UserID: "u1@fake"}}})
+	if err != nil || len(bob.Links) != 1 || bob.Links[0].Source != model.LinkManual {
+		t.Fatalf("create: %+v %v", bob, err)
+	}
+	if _, err := c.LinkPerson(ctx, bob.ID, store.LinkRef{AccountID: "a1", UserID: "u1@fake"}); AsError(err).Status != http.StatusConflict {
+		t.Fatalf("linked elsewhere: %v", err)
+	}
+	if _, err := c.CreatePerson(ctx, PersonInput{Links: []store.LinkRef{{AccountID: "a1", UserID: "nobody"}}}); AsError(err).Status != http.StatusNotFound {
+		t.Fatalf("unknown contact: %v", err)
+	}
+	merged, err := c.MergePersons(ctx, p.ID, []string{bob.ID})
+	if err != nil || len(merged.Links) != 2 || len(merged.Tags) != 1 {
+		t.Fatalf("merge: %+v %v", merged, err)
+	}
+	if _, err := c.GetPerson(ctx, bob.ID); AsError(err).Status != http.StatusNotFound {
+		t.Fatalf("merged source: %v", err)
+	}
+	name := "Alice"
+	if merged, err = c.PatchPerson(ctx, p.ID, PersonPatch{Name: &name, Tags: []string{"work"}}); err != nil || merged.Name != "Alice" || merged.Tags[0] != "work" {
+		t.Fatalf("patch: %+v %v", merged, err)
+	}
+	if err := c.DeletePerson(ctx, p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if ct, _ := c.GetContact(ctx, "a1", "u1@fake"); ct.PersonID != "" {
+		t.Fatalf("person_id after delete: %+v", ct)
+	}
+	updates, _, _ := c.ListEvents(ctx, "", store.EventFilter{Types: []string{model.EvPersonUpdated}}, 100)
+	last := updates[len(updates)-1]
+	if len(updates) < 5 || !strings.Contains(string(last.Data), `"deleted":true`) {
+		t.Fatalf("person.updated events: %d, last %s", len(updates), last.Data)
+	}
+	// Suggestions are reachable through the core even with no pairs left.
+	if _, err := c.SuggestPersons(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -67,8 +67,14 @@ func (c *Core) syncContacts(accountID string) {
 	}
 	err = c.tx(ctx, func(tx *store.Store) error {
 		for _, ct := range contacts {
-			if _, err := tx.UpsertContact(ctx, accountID, ct); err != nil {
+			changed, err := tx.UpsertContact(ctx, accountID, ct)
+			if err != nil {
 				return err
+			}
+			if changed {
+				if err := c.autoLink(ctx, tx, accountID, ct.ID); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -114,6 +120,11 @@ func (c *Core) ingest(ctx context.Context, tx *store.Store, accountID string, ev
 	switch ev.Kind {
 	case adapter.EvMessage:
 		return c.ingestMessage(ctx, tx, accountID, ev)
+	case adapter.EvRequest:
+		if ev.Request == nil {
+			return nil, nil
+		}
+		return nil, c.ingestRequest(ctx, tx, accountID, *ev.Request)
 	case adapter.EvMessageUpdate:
 		m, err := tx.GetMessage(ctx, accountID, ev.ChatID, ev.MessageID)
 		if errors.Is(err, store.ErrNotFound) {
@@ -227,7 +238,10 @@ func (c *Core) ingest(ctx context.Context, tx *store.Store, accountID string, ev
 		if err != nil {
 			return nil, err
 		}
-		return nil, emit(ctx, tx, accountID, model.EvContactUpdated, ct)
+		if err := emit(ctx, tx, accountID, model.EvContactUpdated, ct); err != nil {
+			return nil, err
+		}
+		return nil, c.autoLink(ctx, tx, accountID, ev.Contact.ID)
 	case adapter.EvTyping:
 		return nil, emit(ctx, tx, accountID, model.EvChatTyping, map[string]any{"chat_id": ev.ChatID, "user_id": ev.UserID, "state": ev.State})
 	case adapter.EvPresence:
@@ -259,6 +273,11 @@ func (c *Core) ingestMessage(ctx context.Context, tx *store.Store, accountID str
 	if ev.Sender != nil && ev.Sender.ID == m.Sender.ID {
 		if senderChanged, err = tx.UpsertContact(ctx, accountID, *ev.Sender); err != nil {
 			return nil, err
+		}
+		if senderChanged {
+			if err := c.autoLink(ctx, tx, accountID, ev.Sender.ID); err != nil {
+				return nil, err
+			}
 		}
 	}
 	if m.Sender.Name == "" {

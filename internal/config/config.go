@@ -44,6 +44,10 @@ type Config struct {
 	Log struct {
 		Level string `koanf:"level" validate:"oneof=debug info warn error"`
 	} `koanf:"log"`
+	Persons struct {
+		// AutoLinkByPhone joins contacts that share a phone on different accounts into one person.
+		AutoLinkByPhone bool `koanf:"auto_link_by_phone"`
+	} `koanf:"persons"`
 	// Adapters holds platform-wide settings that every account of a platform inherits.
 	Adapters struct {
 		Telegram struct {
@@ -70,6 +74,7 @@ var defaults = map[string]any{
 	"media.max_upload_mb":        64,
 	"events.retention_days":      7,
 	"log.level":                  "info",
+	"persons.auto_link_by_phone": true,
 }
 
 // Load resolves the config file (explicit path → $CHATBRIDGE_CONFIG → ./chat-bridge.yaml if it

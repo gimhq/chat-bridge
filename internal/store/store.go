@@ -31,7 +31,7 @@ type Store struct {
 	q  queryer
 }
 
-var migrations = []string{schemaV1, schemaV2, schemaV3}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5}
 
 // Open opens (or creates) the database at path and applies pending migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -173,6 +173,67 @@ CREATE TRIGGER messages_fts_au AFTER UPDATE OF text ON messages BEGIN
   INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
 END;
 INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');
+`
+
+// schemaV4 adds requests (api.md §4.8): invites, join requests and calls waiting for the owner.
+// platform_key is the adapter's stable key, so re-emitted requests update the same row.
+const schemaV4 = `
+CREATE TABLE requests (
+  id           TEXT PRIMARY KEY,
+  account_id   TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  platform_key TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  state        TEXT NOT NULL,
+  from_id      TEXT,
+  from_name    TEXT,
+  chat_id      TEXT,
+  chat_name    TEXT,
+  chat_kind    TEXT,
+  message      TEXT,
+  call_kind    TEXT,
+  platform_ref TEXT,
+  raw          TEXT,
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER,
+  answered_at  INTEGER,
+  updated_at   INTEGER NOT NULL,
+  UNIQUE (account_id, platform_key)
+);
+CREATE INDEX requests_open ON requests(account_id, state, created_at DESC);
+CREATE INDEX requests_expiry ON requests(expires_at) WHERE state = 'pending';
+`
+
+// schemaV5 adds persons (api.md §3.8): a bridge-local identity over contacts on several accounts.
+// contacts.phone_norm (digits only, at least 7) drives auto-linking and suggestions.
+const schemaV5 = `
+ALTER TABLE contacts ADD COLUMN phone_norm TEXT;
+UPDATE contacts SET phone_norm = CASE
+  WHEN length(replace(replace(replace(replace(replace(replace(COALESCE(phone,''),'+',''),' ',''),'-',''),'(',''),')',''),'.','')) >= 7
+  THEN replace(replace(replace(replace(replace(replace(phone,'+',''),' ',''),'-',''),'(',''),')',''),'.','') END;
+CREATE INDEX contacts_phone_norm ON contacts(phone_norm) WHERE phone_norm IS NOT NULL;
+CREATE TABLE persons (
+  id          TEXT PRIMARY KEY,
+  name        TEXT,
+  tags        TEXT NOT NULL DEFAULT '[]',
+  notes       TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE TABLE person_links (
+  account_id  TEXT NOT NULL,
+  user_id     TEXT NOT NULL,
+  person_id   TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+  source      TEXT NOT NULL,
+  linked_at   INTEGER NOT NULL,
+  PRIMARY KEY (account_id, user_id),
+  FOREIGN KEY (account_id, user_id) REFERENCES contacts(account_id, id) ON DELETE CASCADE
+);
+CREATE INDEX person_links_person ON person_links(person_id);
+CREATE TABLE person_unlinks (
+  account_id TEXT NOT NULL, user_id TEXT NOT NULL,
+  other_account_id TEXT NOT NULL, other_user_id TEXT NOT NULL,
+  PRIMARY KEY (account_id, user_id, other_account_id, other_user_id)
+);
 `
 
 const schemaV1 = `

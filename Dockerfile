@@ -11,6 +11,15 @@ RUN git clone --depth 1 --branch "${MAUTRIX_SIGNAL_VERSION}" https://github.com/
     && ./build-rust.sh \
     && cp pkg/libsignalgo/libsignal/target/*/libsignal_ffi.a /libsignal_ffi.a
 
+# ---- web UI stage (bun) ------------------------------------------------------------
+# Builds web/ into internal/webui/dist, which the Go binary embeds.
+FROM oven/bun:1-alpine AS web
+WORKDIR /src/web
+COPY web/package.json web/bun.lock ./
+RUN bun install --frozen-lockfile
+COPY web/ ./
+RUN mkdir -p ../internal/webui/dist && bun run typecheck && bun run build
+
 # ---- build stage --------------------------------------------------------------
 FROM golang:1.26-alpine AS build
 RUN apk add --no-cache build-base zlib-dev
@@ -24,6 +33,7 @@ COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
 
 COPY . .
+COPY --from=web /src/internal/webui/dist ./internal/webui/dist
 
 # `docker build --target test .` runs the unit tests inside the same toolchain.
 FROM build AS test

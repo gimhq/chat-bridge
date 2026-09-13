@@ -27,6 +27,7 @@ type remoteRef struct {
 
 func (acc *account) wireHandlers() {
 	d := acc.dispatcher
+	acc.wireRequestHandlers(d)
 	d.OnNewMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateNewMessage) error {
 		acc.applyEntities(ctx, e)
 		acc.rep.Events(acc.convertMessage(u.Message, e, false)...)

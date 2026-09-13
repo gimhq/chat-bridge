@@ -281,6 +281,9 @@ type account struct {
 	direct    map[id.UserID]id.RoomID
 	reactions map[string]id.EventID // "<event>|<emoji>" → our reaction event
 	connected bool
+
+	invites     map[id.RoomID]*adapter.Request // pending invites reported this session
+	inviteNames map[id.RoomID]string           // room names from invite state
 }
 
 func (acc *account) loadSession() (session, error) {
@@ -315,6 +318,10 @@ func (acc *account) open(s session) error {
 	syncer.OnEventType(event.EphemeralEventTyping, acc.onTyping)
 	syncer.OnEventType(event.EphemeralEventReceipt, acc.onReceipt)
 	syncer.OnEventType(event.EphemeralEventPresence, acc.onPresence)
+	syncer.OnEventType(event.CallInvite, acc.onCallInvite)
+	syncer.OnEventType(event.CallHangup, acc.onCallEnd)
+	syncer.OnEventType(event.CallReject, acc.onCallEnd)
+	syncer.OnEventType(event.CallAnswer, acc.onCallEnd)
 	syncer.OnSync(func(context.Context, *mautrix.RespSync, string) bool {
 		acc.mu.Lock()
 		first := !acc.connected

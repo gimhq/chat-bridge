@@ -13,7 +13,14 @@ import (
 )
 
 const chatCols = `account_id, id, kind, COALESCE(name,''), COALESCE(avatar_media,''), unread_count, last_message_ts, last_message_seq,
-	muted, archived, tags, pinned_ids, ephemeral_ttl_s, raw, updated_at`
+	muted, archived, tags, pinned_ids, ephemeral_ttl_s, raw, updated_at, ` + chatPersonExpr
+
+// chatPersonExpr finds the person behind a direct chat: the chat id is the counterpart's user id
+// (WhatsApp, Telegram) or the counterpart is the other member (Matrix rooms).
+const chatPersonExpr = `(SELECT pl.person_id FROM person_links pl WHERE chats.kind = 'direct' AND pl.account_id = chats.account_id
+	AND (pl.user_id = chats.id OR pl.user_id IN (SELECT m.user_id FROM chat_members m WHERE m.account_id = chats.account_id
+	AND m.chat_id = chats.id AND m.left_at IS NULL AND m.user_id <> COALESCE((SELECT a.self_id FROM accounts a WHERE a.id = chats.account_id), '')))
+	ORDER BY pl.linked_at LIMIT 1)`
 
 // UpsertChat creates the chat or overlays non-empty fields of c. It reports whether the row was created.
 func (s *Store) UpsertChat(ctx context.Context, c model.Chat) (bool, error) {
@@ -150,6 +157,7 @@ type ChatFilter struct {
 	Kind     string
 	Archived *bool
 	Tag      string
+	Person   string
 }
 
 // ListChats pages chats by recent activity. The cursor is "<last_message_ts>:<id>".
@@ -167,6 +175,10 @@ func (s *Store) ListChats(ctx context.Context, accountID string, f ChatFilter, c
 	if f.Tag != "" {
 		where += ` AND EXISTS (SELECT 1 FROM json_each(tags) WHERE value = ?)`
 		args = append(args, f.Tag)
+	}
+	if f.Person != "" {
+		where += ` AND ` + chatPersonExpr + ` = ?`
+		args = append(args, f.Person)
 	}
 	if cursor != "" {
 		ts, id, ok := splitCursor(cursor)
@@ -289,12 +301,13 @@ func scanChat(row scanner) (model.Chat, int64, error) {
 	var avatar, tags, pinned string
 	var lastTS, lastSeq, ttl sql.NullInt64
 	var muted, archived int
-	var raw sql.NullString
+	var raw, person sql.NullString
 	var updated int64
 	if err := row.Scan(&c.AccountID, &c.ID, &c.Kind, &c.Name, &avatar, &c.UnreadCount, &lastTS, &lastSeq,
-		&muted, &archived, &tags, &pinned, &ttl, &raw, &updated); err != nil {
+		&muted, &archived, &tags, &pinned, &ttl, &raw, &updated, &person); err != nil {
 		return c, 0, err
 	}
+	c.PersonID = person.String
 	if avatar != "" {
 		c.Avatar = &model.AvatarRef{MediaID: avatar}
 	}

@@ -118,6 +118,27 @@ type wireEvent struct {
 
 	PlatformType string          `json:"platform_type,omitempty"`
 	Raw          json.RawMessage `json:"raw,omitempty"`
+
+	Request *wireRequest `json:"request,omitempty"`
+}
+
+// wireRequest is the `request` event payload (adapter-protocol.md §5.3).
+type wireRequest struct {
+	Key  string `json:"key"`
+	Kind string `json:"kind"`
+	// State is empty or "pending" for a new request; "accepted", "rejected" or "expired" when the
+	// platform resolved it (answered on another device, call ended).
+	State string `json:"state,omitempty"`
+	From  *struct {
+		ID   string `json:"id"`
+		Name string `json:"name,omitempty"`
+	} `json:"from,omitempty"`
+	Chat        *model.RequestChat `json:"chat,omitempty"`
+	Message     string             `json:"message,omitempty"`
+	CallKind    string             `json:"call_kind,omitempty"`
+	PlatformRef json.RawMessage    `json:"platform_ref,omitempty"`
+	CreatedAt   *time.Time         `json:"created_at,omitempty"`
+	ExpiresAt   *time.Time         `json:"expires_at,omitempty"`
 }
 
 // decode converts a wire event into the in-process form.
@@ -165,6 +186,25 @@ func (w wireEvent) decode() (adapter.Event, error) {
 		ev.Message = &m
 	case adapter.EvMember:
 		ev.Member = &adapter.Member{ChatID: w.ChatID, UserID: w.UserID, ChatName: w.ChatName, Role: w.Role, Left: w.Left}
+	case adapter.EvRequest:
+		r := w.Request
+		if r == nil || r.Key == "" || r.Kind == "" {
+			return ev, fmt.Errorf("request event needs request.key and request.kind")
+		}
+		in := &adapter.Request{Key: r.Key, Kind: r.Kind, State: r.State, Message: r.Message, CallKind: r.CallKind, PlatformRef: r.PlatformRef, ExpiresAt: r.ExpiresAt}
+		if in.State == model.RequestPending {
+			in.State = ""
+		}
+		if r.From != nil {
+			in.FromID, in.FromName = r.From.ID, r.From.Name
+		}
+		if r.Chat != nil {
+			in.ChatID, in.ChatName, in.ChatKind = r.Chat.ID, r.Chat.Name, r.Chat.Kind
+		}
+		if r.CreatedAt != nil {
+			in.CreatedAt = r.CreatedAt.UTC()
+		}
+		ev.Request = in
 	case adapter.EvMessageUpdate, adapter.EvMessageDelete, adapter.EvReaction, adapter.EvReceipt, adapter.EvChat,
 		adapter.EvContact, adapter.EvTyping, adapter.EvPresence, adapter.EvPlatform:
 	default:

@@ -136,3 +136,11 @@ Four phases, each ending with the quality gate and a commit so partial delivery 
 - 2026-09-13 06:40 — Phase A delivered and committed (see changelog). Deviation from the plan text:
   `backfill=1` without `message.history` is ignored rather than rejected, matching api.md §4.4.
   Platform calls verified by compile and fake-adapter tests only; no live accounts here.
+- 2026-09-13 20:05 — user approved Phase B ("可以" after the Persons explanation), including a
+  Persons page in the web UI delivered by `20260913-1903-web-ui-and-requests`.
+- 2026-09-13 20:32 — Phase B delivered (see changelog). Notes: the auto-created person is named after the
+  contact whose update completed the match; suggestions do not yet exclude pairs the owner split;
+  the `person=` event filter matches by contact id, so Matrix direct-room events whose chat id is
+  the room are matched through the sender only. Phase C was delivered by
+  `20260913-1903-web-ui-and-requests` for invites and calls; Phase D (retention) remains, so the
+  task stays in progress.

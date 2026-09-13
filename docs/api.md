@@ -74,6 +74,7 @@ maps to `CHATBRIDGE_<SECTION>_<KEY>`; list values are comma separated in the env
 | `media.max_upload_mb` | `CHATBRIDGE_MEDIA_MAX_UPLOAD_MB` | `64` | cap for `POST /accounts/{a}/media` |
 | `events.retention_days` | `CHATBRIDGE_EVENTS_RETENTION_DAYS` | `7` | event log retention |
 | `log.level` | `CHATBRIDGE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `persons.auto_link_by_phone` | `CHATBRIDGE_PERSONS_AUTO_LINK_BY_PHONE` | `true` | join contacts on different accounts that share a phone into one Person (§3.8) |
 | `adapters.telegram.api_id` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID` | — | Telegram application id (my.telegram.org), inherited by every Telegram account |
 | `adapters.telegram.api_hash` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_HASH` | — | Telegram application hash (secret); an account's own `config` may override both |
 
@@ -382,9 +383,16 @@ from.
 ```
 
 - `links` are the Contacts that make up the person; each Contact belongs to at most one Person.
+  Each link also carries the contact's current `platform`, resolved `name`, `handle` and `phone`
+  for display.
   `source` is `manual` or `phone` (auto-linked because two contacts on different accounts share an
   E.164 `phone`; controlled by bridge config `persons.auto_link_by_phone`, default `true`).
-  Automatic links can be removed like manual ones and are not re-created for that pair.
+  Automatic links can be removed like manual ones and are not re-created for that pair: removing
+  a contact records it as split from every contact that stays in the person. Auto-linking runs
+  whenever a contact row changes: other accounts' non-self contacts with the same phone (digits
+  only, at least seven) are looked up; if exactly one Person is among them the contact joins it,
+  if none is, a Person named after the contact is created with all of them, if several are,
+  nothing happens and `/persons/suggest` lists them.
 - `channels` is derived: the direct chat on each linked account, if one exists, with the platform
   name and last activity, so a consumer choosing where to reply picks one explicitly.
 - `name` is a local label; it does **not** enter the `sender.name` resolution (§3.7), which stays
@@ -539,8 +547,12 @@ Not account-scoped. See §3.8.
 | GET | `/persons/{p}/messages` | `cursor, limit, scope=direct\|all` | `{messages, next_cursor}` merged by timestamp across accounts; `direct` = their direct chats, `all` = also their messages in groups |
 | GET | `/persons/suggest` | | `{suggestions: [{contacts: [{account_id, user_id, name, phone}], reason: "phone"}]}` — unlinked contacts that share a phone, for a UI to confirm when auto-link is off |
 
-`GET /events` accepts `person=` to filter to events whose sender or direct-chat counterpart is
-that person.
+`GET /events` and `GET /events/stream` accept `person=` to filter to that person's own
+`person.updated` events and to events on a linked account whose sender, user, chat, or subject id is
+a linked contact (`404` for an unknown person). `person_id` is omitted on Contact, Chat and sender
+when the contact is not linked. Deleting or merging emits `person.updated` with
+`{"id": "per_…", "deleted": true}` (plus `"merged_into"` for merges) and `contact.updated` for every
+contact whose `person_id` changed.
 
 ### 4.8 Requests
 
@@ -552,8 +564,9 @@ an answer.
 |---|---|---|---|
 | GET | `/accounts/{a}/requests` | `cursor, limit, kind?, state?` | `{requests: [Request], next_cursor}` |
 | GET | `/accounts/{a}/requests/{id}` | | Request |
-| POST | `/accounts/{a}/requests/{id}/accept` | `{alias?}` (contact requests) | Request `accepted` |
-| POST | `/accounts/{a}/requests/{id}/reject` | `{reason?}` | Request `rejected` |
+| POST | `/accounts/{a}/requests/{id}/accept` | `{reason?}` | Request `accepted`; `409` unless `pending`, `400` for calls |
+| POST | `/accounts/{a}/requests/{id}/reject` | `{reason?}` | Request `rejected`; `409` unless `pending`. For a call this hangs up on every device of the account, which is why calls do not offer it |
+| POST | `/accounts/{a}/requests/{id}/ignore` | | Request `ignored`; `409` unless `pending`. Local only: the platform is not contacted, so other devices keep ringing or keep the invite |
 
 ```json
 {
@@ -564,16 +577,39 @@ an answer.
   "from": {"id": "wxid_abc", "name": "Bob"},
   "chat": null,
   "message": "Hi, I'm Bob from the meetup",
+  "call": null,
+  "actions": ["accept", "reject", "ignore"],
   "created_at": "2026-09-12T13:05:00Z",
   "expires_at": "2026-09-19T13:05:00Z",
+  "answered_at": null,
   "raw": {}
 }
 ```
 
 `kind`: `contact_request`, `chat_invite` (`chat` set, `from` is the inviter), `join_request`
 (`chat` is the owned group, `from` the applicant), `call` (`chat` is the direct chat; only
-`reject` is valid, and it auto-expires when the call ends). `state`: `pending`, `accepted`,
-`rejected`, `expired`. Accepting a `chat_invite` yields a `chat.new` event.
+`reject` is valid, and it auto-expires when the call ends). `state`: `pending`, `accepted`, `rejected`,
+`ignored`, `expired`. Accepting a `chat_invite` yields a `chat.new` event.
+
+`actions` lists the answers a client should offer: `["ignore"]` for calls,
+`["accept", "reject", "ignore"]` for other pending requests, `[]` once answered, ignored or
+expired. Ignoring never reaches the platform and needs no connected account; it only takes the
+request off the bridge's pending list. `call` is `{kind: "voice" | "video"}` on
+call requests. The platform can resolve a request on its own (answered on the phone, call hung
+up), which emits `request.updated` with the new state. Pending requests past `expires_at` become
+`expired`. Answering a request needs the account connected (`409 account_not_ready`) and an
+adapter that answers requests (`422 unsupported` otherwise). `GET …/requests` filters with
+`kind` and `state`.
+
+| Platform | Kinds | accept | reject (ignore is always local) |
+|---|---|---|---|
+| WhatsApp | `call` (incoming voice call) | — | rejects the call |
+| WhatsApp | `chat_invite` (group invite message) | joins the group | dismisses locally (WhatsApp has no decline) |
+| Telegram | `call` | — | discards the call as busy |
+| Telegram | `join_request` (to a group or channel you own) | approves | dismisses |
+| Matrix | `chat_invite` (room invite) | joins the room | leaves (declines) |
+| Matrix | `call` (`m.call.invite`) | — | sends `m.call.reject` (`m.call.hangup` for VoIP v0) |
+| Signal (hosted) | none | | |
 
 ### 4.9 Events (see §6)
 

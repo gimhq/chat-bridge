@@ -168,3 +168,23 @@ func TestAdapterDefaults(t *testing.T) {
 		t.Fatalf("file: %+v %v", cfg.Adapters, err)
 	}
 }
+
+func TestPersonsAutoLinkSetting(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("CHATBRIDGE_CONFIG", "")
+	t.Setenv("CHATBRIDGE_SERVER_TOKEN", "0123456789abcdef-token")
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Persons.AutoLinkByPhone {
+		t.Fatal("auto-link by phone must default to on")
+	}
+	t.Setenv("CHATBRIDGE_PERSONS_AUTO_LINK_BY_PHONE", "false")
+	if cfg, err = Load(""); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Persons.AutoLinkByPhone {
+		t.Fatal("CHATBRIDGE_PERSONS_AUTO_LINK_BY_PHONE=false must turn it off")
+	}
+}

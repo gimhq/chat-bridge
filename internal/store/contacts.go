@@ -13,7 +13,22 @@ import (
 )
 
 const contactCols = `account_id, id, COALESCE(handle,''), COALESCE(phone,''), COALESCE(email,''), names,
-	COALESCE(avatar_media,''), is_self, is_contact, blocked, COALESCE(bio,''), raw, updated_at`
+	COALESCE(avatar_media,''), is_self, is_contact, blocked, COALESCE(bio,''), raw, updated_at,
+	(SELECT pl.person_id FROM person_links pl WHERE pl.account_id = contacts.account_id AND pl.user_id = contacts.id)`
+
+// normPhone keeps the digits of a phone number; shorter than 7 digits is not a phone to match on.
+func normPhone(p string) string {
+	var b strings.Builder
+	for _, r := range p {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		}
+	}
+	if b.Len() < 7 {
+		return ""
+	}
+	return b.String()
+}
 
 // UpsertContact merges c into the stored row. Empty fields in c never erase stored values.
 // It reports whether anything visible changed.
@@ -32,14 +47,14 @@ func (s *Store) UpsertContact(ctx context.Context, accountID string, c model.Con
 
 func (s *Store) writeContact(ctx context.Context, accountID string, c model.Contact) error {
 	_, err := s.q.ExecContext(ctx, `INSERT INTO contacts
-		(account_id, id, handle, phone, email, names, avatar_media, is_self, is_contact, blocked, bio, raw, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(account_id, id) DO UPDATE SET handle=excluded.handle, phone=excluded.phone, email=excluded.email,
+		(account_id, id, handle, phone, email, names, avatar_media, is_self, is_contact, blocked, bio, raw, updated_at, phone_norm)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(account_id, id) DO UPDATE SET handle=excluded.handle, phone=excluded.phone, phone_norm=excluded.phone_norm, email=excluded.email,
 		names=excluded.names, avatar_media=excluded.avatar_media, is_self=excluded.is_self,
 		is_contact=excluded.is_contact, blocked=excluded.blocked, bio=excluded.bio, raw=excluded.raw, updated_at=excluded.updated_at`,
 		accountID, c.ID, nullStr(c.Handle), nullStr(c.Phone), nullStr(c.Email), mustJSON(c.Names),
 		nullStr(avatarID(c.Avatar)), boolInt(c.IsSelf), boolInt(c.IsContact),
-		boolInt(c.Blocked), nullStr(c.Bio), rawOrNull(c.Raw), unix(time.Now()))
+		boolInt(c.Blocked), nullStr(c.Bio), rawOrNull(c.Raw), unix(time.Now()), nullStr(normPhone(c.Phone)))
 	if err != nil {
 		return fmt.Errorf("upsert contact: %w", err)
 	}
@@ -151,12 +166,13 @@ func scanContact(row scanner) (model.Contact, error) {
 	var c model.Contact
 	var account, names, avatar string
 	var isSelf, isContact, blocked int
-	var raw sql.NullString
+	var raw, person sql.NullString
 	var updated int64
 	if err := row.Scan(&account, &c.ID, &c.Handle, &c.Phone, &c.Email, &names, &avatar,
-		&isSelf, &isContact, &blocked, &c.Bio, &raw, &updated); err != nil {
+		&isSelf, &isContact, &blocked, &c.Bio, &raw, &updated, &person); err != nil {
 		return c, err
 	}
+	c.PersonID = person.String
 	_ = json.Unmarshal([]byte(names), &c.Names)
 	if avatar != "" {
 		c.Avatar = &model.AvatarRef{MediaID: avatar}

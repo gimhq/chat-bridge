@@ -192,7 +192,7 @@ func (h *handlers) loginCancel(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) listChats(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	f := store.ChatFilter{Kind: q.Get("kind"), Tag: q.Get("tag")}
+	f := store.ChatFilter{Kind: q.Get("kind"), Tag: q.Get("tag"), Person: q.Get("person")}
 	if v := q.Get("archived"); v != "" {
 		b := v == "1" || v == "true"
 		f.Archived = &b
@@ -559,15 +559,184 @@ func (h *handlers) patchContact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, c)
 }
 
+// --- persons ---
+
+func (h *handlers) listPersons(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	out, next, err := h.core.ListPersons(r.Context(), store.PersonFilter{Tag: q.Get("tag"), Q: q.Get("q")}, q.Get("cursor"), parseLimit(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeList(w, "persons", out, next)
+}
+
+func (h *handlers) createPerson(w http.ResponseWriter, r *http.Request) {
+	var in core.PersonInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	p, err := h.core.CreatePerson(r.Context(), in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, p)
+}
+
+func (h *handlers) suggestPersons(w http.ResponseWriter, r *http.Request) {
+	out, err := h.core.SuggestPersons(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"suggestions": out})
+}
+
+func (h *handlers) getPerson(w http.ResponseWriter, r *http.Request) {
+	p, err := h.core.GetPerson(r.Context(), param(r, "person"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (h *handlers) patchPerson(w http.ResponseWriter, r *http.Request) {
+	var in core.PersonPatch
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	p, err := h.core.PatchPerson(r.Context(), param(r, "person"), in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (h *handlers) deletePerson(w http.ResponseWriter, r *http.Request) {
+	if err := h.core.DeletePerson(r.Context(), param(r, "person")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handlers) linkPerson(w http.ResponseWriter, r *http.Request) {
+	var l store.LinkRef
+	if !decodeJSON(w, r, &l) {
+		return
+	}
+	if l.AccountID == "" || l.UserID == "" {
+		writeErr(w, &core.Error{Status: http.StatusBadRequest, Code: "invalid_request", Message: "account_id and user_id are required"})
+		return
+	}
+	p, err := h.core.LinkPerson(r.Context(), param(r, "person"), l)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (h *handlers) unlinkPerson(w http.ResponseWriter, r *http.Request) {
+	p, err := h.core.UnlinkPerson(r.Context(), param(r, "person"), store.LinkRef{AccountID: param(r, "linkAccount"), UserID: param(r, "linkUser")})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (h *handlers) mergePersons(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		From []string `json:"from"`
+	}
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	p, err := h.core.MergePersons(r.Context(), param(r, "person"), in.From)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, p)
+}
+
+func (h *handlers) personChats(w http.ResponseWriter, r *http.Request) {
+	out, err := h.core.PersonChats(r.Context(), param(r, "person"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chats": out})
+}
+
+func (h *handlers) personMessages(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	out, next, err := h.core.PersonMessages(r.Context(), param(r, "person"), q.Get("scope"), q.Get("cursor"), parseLimit(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeList(w, "messages", out, next)
+}
+
+// --- requests ---
+
+func (h *handlers) listRequests(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	out, next, err := h.core.ListRequests(r.Context(), param(r, "account"), store.RequestFilter{Kind: q.Get("kind"), State: q.Get("state")}, q.Get("cursor"), parseLimit(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeList(w, "requests", out, next)
+}
+
+func (h *handlers) getRequest(w http.ResponseWriter, r *http.Request) {
+	out, err := h.core.GetRequest(r.Context(), param(r, "account"), param(r, "req"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (h *handlers) answerRequest(action string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Reason string `json:"reason"`
+		}
+		if r.ContentLength > 0 && !decodeJSON(w, r, &body) {
+			return
+		}
+		out, err := h.core.AnswerRequest(r.Context(), param(r, "account"), param(r, "req"), action, body.Reason)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, out)
+	}
+}
+
 // --- events ---
 
-func eventFilter(r *http.Request) store.EventFilter {
+func (h *handlers) eventFilter(r *http.Request) (store.EventFilter, error) {
 	q := r.URL.Query()
 	f := store.EventFilter{AccountID: q.Get("account")}
 	if t := q.Get("types"); t != "" {
 		f.Types = strings.Split(t, ",")
 	}
-	return f
+	if p := q.Get("person"); p != "" {
+		scope, err := h.core.PersonScope(r.Context(), p)
+		if err != nil {
+			return f, err
+		}
+		f.Person = scope
+	}
+	return f, nil
 }
 
 func (h *handlers) events(w http.ResponseWriter, r *http.Request) {
@@ -581,7 +750,12 @@ func (h *handlers) events(w http.ResponseWriter, r *http.Request) {
 		}
 		wait = min(time.Duration(n)*time.Second, maxWait)
 	}
-	evs, next, err := h.core.WaitEvents(r.Context(), q.Get("cursor"), eventFilter(r), parseLimit(r), wait)
+	filter, err := h.eventFilter(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	evs, next, err := h.core.WaitEvents(r.Context(), q.Get("cursor"), filter, parseLimit(r), wait)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -596,6 +770,11 @@ func (h *handlers) eventStream(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		writeErr(w, &core.Error{Status: http.StatusInternalServerError, Code: "internal", Message: "streaming unsupported"})
+		return
+	}
+	filter, err := h.eventFilter(r)
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
 	cursor := r.URL.Query().Get("cursor")
@@ -626,7 +805,7 @@ func (h *handlers) eventStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 	defer close(done)
-	_ = h.core.Stream(ctx, cursor, eventFilter(r), func(ev model.Event) error {
+	_ = h.core.Stream(ctx, cursor, filter, func(ev model.Event) error {
 		b, _ := json.Marshal(ev)
 		if _, err := fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", ev.ID, ev.Type, b); err != nil {
 			return err

@@ -36,6 +36,8 @@ adapter leaving or returning changes account status but never account data.
 | `internal/store` | SQLite persistence: accounts, chats, contacts, messages, events, webhooks, media index |
 | `internal/media` | Content-addressed blob storage |
 | `internal/model` | Shared API/domain types |
+| `internal/webui` | `go:embed` of the built management UI, served at `/ui/` (`internal/server/ui.go`) |
+| `web/` | Management UI source: React, Vite, TanStack Router and Query, shadcn/ui on Base UI; a plain consumer of `/v1` |
 
 ## Data flow
 
@@ -46,6 +48,9 @@ adapter leaving or returning changes account status but never account data.
   sent message and emits `message.new`. Replies with the same `client_id` return the stored row.
 - Login: a platform-agnostic step machine (`input` / `display` / `done` / `failed`) driven by the
   adapter, recorded as `account.login_step` events.
+- Requests: adapter `request` events (invites, join requests, calls) → `requests` rows keyed by the
+  adapter's stable key → `request.new` / `request.updated`; answers go back through
+  `RequestAnswerer`, and the GC loop expires pending ones.
 
 ## Details
 

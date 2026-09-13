@@ -52,6 +52,32 @@ rooms are end-to-end encrypted transparently; `POST /accounts/{a}/keys/verify` w
 account's recovery key cross-signs the bridge device and restores the key backup. Signal links
 as a secondary device: `{"flow":"qr"}` returns the `sgnl://linkdevice` URI to scan.
 
+## Web UI
+
+The binary serves a management UI at `http://127.0.0.1:8080/ui/` (`/` redirects there). Sign in
+with `server.token`; the token stays in the browser's local storage. It covers accounts (create,
+login by QR / code / password, reconnect, logout, delete, profile), chats (list, archive, mute,
+create and rename groups, search), the message timeline (media, replies, reactions, sending text
+and files, older history), contacts (alias, block), requests (accept invites, reject calls, with a
+toast when one arrives), persons (one human's contacts across accounts: automatic grouping by
+phone, suggestions, merged timeline, merge and unlink), a live event log, and system status with
+webhooks.
+
+The UI is built from `web/` (React, Vite, TanStack Router and Query, shadcn/ui on Base UI) into
+`internal/webui/dist` and embedded with `go:embed`; the Docker build does this in a bun stage.
+Without a build, `/ui/` answers with instructions and the API works as usual.
+
+```bash
+cd web && bun install && bun run build && cd .. && go build -tags goolm ./cmd/chat-bridge
+```
+
+Development with live reload uses nsl so UI and API share one origin:
+
+```bash
+bunx nsl route chat-bridge:/v1 8080     # the Go server, already running on :8080
+cd web && bun run dev                    # http://chat-bridge.localhost:3355/ui/
+```
+
 ## Layout
 
 ```
@@ -68,6 +94,8 @@ internal/adapters/
   connector/            host for mautrix bridgev2 network connectors (virtual Matrix side)
   signal/               Signal = hosted mautrix-signal connector (build tag `signal`, cgo)
   remote/               WebSocket + JSON-RPC host for out-of-process adapters
+internal/webui/         go:embed of the built UI (dist/ is generated)
+web/                    management UI source (bun; see Web UI)
 scripts/                build-libsignal.sh (libsignal_ffi.a for local `-tags signal` builds)
 docs/                   specs, architecture, PMA task/plan tracking
 ```
@@ -78,6 +106,12 @@ docs/                   specs, architecture, PMA task/plan tracking
 test -z "$(gofmt -l .)" && go vet -tags goolm ./... && golangci-lint run && go test -tags goolm ./... && go build -tags goolm ./...
 # with libsignal available (see above); skipped when .tmp/libsignal/libsignal_ffi.a is absent
 CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go vet -tags goolm,signal ./... && CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go build -tags goolm,signal ./...
+```
+
+Web UI gates (in `web/`):
+
+```bash
+bun run lint && bun run typecheck && bun run test && bun run build
 ```
 
 `docker build --target test .` runs `go vet` and the unit tests with both tags in the build toolchain.

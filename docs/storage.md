@@ -200,18 +200,20 @@ CREATE TABLE raw_payloads (                  -- ?raw=1; separate so the hot tabl
   created_at  INTEGER NOT NULL
 );
 
-CREATE TABLE requests (
-  id          TEXT PRIMARY KEY,             -- req_<ulid>
-  account_id  TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  kind        TEXT NOT NULL,
-  state       TEXT NOT NULL,
-  from_id     TEXT, chat_id TEXT,
-  message     TEXT,
-  platform_ref TEXT,                        -- json, what the adapter needs to answer it
-  raw         TEXT,
-  created_at  INTEGER NOT NULL, expires_at INTEGER, updated_at INTEGER NOT NULL
+CREATE TABLE requests (                      -- schema v4
+  id           TEXT PRIMARY KEY,             -- req_<uuid>
+  account_id   TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  platform_key TEXT NOT NULL,                -- adapter's stable key; re-emits update the same row
+  kind TEXT NOT NULL, state TEXT NOT NULL,
+  from_id TEXT, from_name TEXT, chat_id TEXT, chat_name TEXT, chat_kind TEXT,
+  message TEXT, call_kind TEXT,
+  platform_ref TEXT,                         -- json, what the adapter needs to answer it
+  raw TEXT,
+  created_at INTEGER NOT NULL, expires_at INTEGER, answered_at INTEGER, updated_at INTEGER NOT NULL,
+  UNIQUE (account_id, platform_key)
 );
 CREATE INDEX requests_open ON requests(account_id, state, created_at DESC);
+CREATE INDEX requests_expiry ON requests(expires_at) WHERE state = 'pending';
 
 CREATE TABLE events (
   id          INTEGER PRIMARY KEY,          -- the cursor
@@ -368,6 +370,8 @@ than it knows. No down migrations. Adapter-private databases are versioned by th
 | 1 | initial schema |
 | 2 | `accounts.adapter` (instance binding) |
 | 3 | `messages_fts` (trigram FTS5, external content) with its triggers, rebuilt over existing rows |
+| 4 | `requests` (invites, join requests, calls) |
+| 5 | `persons`, `person_links`, `person_unlinks`; `contacts.phone_norm` (digits only, at least 7, indexed) backfilled from `phone` |
 
 ## 9. Sizing
 

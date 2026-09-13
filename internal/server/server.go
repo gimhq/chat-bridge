@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -16,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 
 	"gimhq/chat-bridge/internal/core"
+	"gimhq/chat-bridge/internal/model"
 )
 
 const (
@@ -33,6 +35,8 @@ type Options struct {
 	Logger         *slog.Logger
 	// AdapterHub, when set, is mounted at /adapter/v1 for out-of-process adapters. It does its own auth.
 	AdapterHub http.Handler
+	// UI is the built management app served at /ui/; nil serves a "not built" notice.
+	UI fs.FS
 }
 
 type handlers struct {
@@ -58,11 +62,28 @@ func New(opts Options) http.Handler {
 	if opts.AdapterHub != nil {
 		r.Mount("/adapter/v1", opts.AdapterHub)
 	}
+	r.Get("/", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusFound) })
+	r.Get("/ui", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui/", http.StatusMovedPermanently) })
+	r.Get("/ui/*", uiHandler(opts.UI))
 
 	r.Route("/v1", func(r chi.Router) {
 		r.Use(bearerAuth(opts.Token))
 		r.Get("/status", h.status)
 		r.Get("/platforms", h.platforms)
+
+		r.Get("/persons", h.listPersons)
+		r.Post("/persons", h.createPerson)
+		r.Get("/persons/suggest", h.suggestPersons)
+		r.Route("/persons/{person}", func(r chi.Router) {
+			r.Get("/", h.getPerson)
+			r.Patch("/", h.patchPerson)
+			r.Delete("/", h.deletePerson)
+			r.Post("/links", h.linkPerson)
+			r.Delete("/links/{linkAccount}/{linkUser}", h.unlinkPerson)
+			r.Post("/merge", h.mergePersons)
+			r.Get("/chats", h.personChats)
+			r.Get("/messages", h.personMessages)
+		})
 
 		r.Get("/accounts", h.listAccounts)
 		r.Post("/accounts", h.createAccount)
@@ -102,6 +123,12 @@ func New(opts Options) http.Handler {
 			r.Post("/keys/verify", h.keysVerify)
 			r.Post("/keys/export", h.keysExport)
 			r.Post("/keys/import", h.keysImport)
+
+			r.Get("/requests", h.listRequests)
+			r.Get("/requests/{req}", h.getRequest)
+			r.Post("/requests/{req}/accept", h.answerRequest(model.ActionAccept))
+			r.Post("/requests/{req}/reject", h.answerRequest(model.ActionReject))
+			r.Post("/requests/{req}/ignore", h.answerRequest(model.ActionIgnore))
 
 			r.Get("/contacts", h.listContacts)
 			r.Get("/contacts/{user}", h.getContact)

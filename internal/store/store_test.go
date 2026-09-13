@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -337,5 +338,278 @@ func TestSearchRenameAndBlock(t *testing.T) {
 	ct, err := s.SetBlocked(ctx, "a1", "u1", true)
 	if err != nil || !ct.Blocked {
 		t.Fatalf("block: %+v %v", ct, err)
+	}
+}
+
+func TestRequestsUpsertStateAndPaging(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if err := s.CreateAccount(ctx, "a1", "fake", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	base := time.Unix(1_700_000_000, 0).UTC()
+	in := StoredRequest{PlatformKey: "invite:g1", PlatformRef: json.RawMessage(`{"code":"x"}`), Request: model.Request{AccountID: "a1",
+		Kind: model.RequestKindChatInvite, From: &model.Sender{ID: "u1", Name: "Alice"}, Chat: &model.RequestChat{ID: "g1", Name: "Team"}, CreatedAt: base}}
+	got, change, err := s.UpsertRequest(ctx, in)
+	if err != nil || change != RequestCreated || got.ID == "" || got.State != model.RequestPending || len(got.Actions) != 3 {
+		t.Fatalf("create: %+v %v %v", got, change, err)
+	}
+	// Same payload: nothing changes. New chat name: updated.
+	if _, change, _ = s.UpsertRequest(ctx, in); change != RequestUnchanged {
+		t.Fatalf("replay: %v", change)
+	}
+	in.Chat.Name = "Team 2"
+	if got, change, _ = s.UpsertRequest(ctx, in); change != RequestUpdated || got.Chat.Name != "Team 2" {
+		t.Fatalf("rename: %+v %v", got, change)
+	}
+	// Answered requests are terminal: a replayed pending invite does not reopen them...
+	answered := base.Add(time.Minute)
+	if _, change, _ := s.UpsertRequest(ctx, StoredRequest{PlatformKey: "call:gone", Request: model.Request{AccountID: "a1", Kind: model.RequestKindCall,
+		State: model.RequestExpired}}); change != RequestUnchanged {
+		t.Fatalf("terminal first sighting must not create a row: %v", change)
+	}
+	if got, err = s.SetRequestState(ctx, "a1", got.ID, model.RequestRejected, &answered); err != nil || got.State != model.RequestRejected || got.AnsweredAt == nil || len(got.Actions) != 0 {
+		t.Fatalf("reject: %+v %v", got, err)
+	}
+	if got, change, _ = s.UpsertRequest(ctx, in); change != RequestUnchanged || got.State != model.RequestRejected {
+		t.Fatalf("replay after reject: %+v %v", got, change)
+	}
+	// ...but a later invite for the same key does.
+	in.CreatedAt = base.Add(time.Hour)
+	if got, change, _ = s.UpsertRequest(ctx, in); change != RequestUpdated || got.State != model.RequestPending || got.AnsweredAt != nil {
+		t.Fatalf("reinvite: %+v %v", got, change)
+	}
+	st, err := s.GetRequest(ctx, "a1", got.ID)
+	if err != nil || string(st.PlatformRef) != `{"code":"x"}` || st.PlatformKey != "invite:g1" {
+		t.Fatalf("get: %+v %v", st, err)
+	}
+	// Adapter-reported terminal state applies to pending rows.
+	call := StoredRequest{PlatformKey: "call:c1", Request: model.Request{AccountID: "a1", Kind: model.RequestKindCall, Call: &model.CallInfo{Kind: "voice"},
+		From: &model.Sender{ID: "u2"}, CreatedAt: base.Add(2 * time.Hour), ExpiresAt: ptrTime(base.Add(2*time.Hour + time.Minute))}}
+	c1, _, _ := s.UpsertRequest(ctx, call)
+	if len(c1.Actions) != 1 || c1.Actions[0] != model.ActionIgnore || c1.Call == nil || c1.Call.Kind != "voice" {
+		t.Fatalf("call: %+v", c1)
+	}
+	call.State = model.RequestExpired
+	if c1, change, _ = s.UpsertRequest(ctx, call); change != RequestUpdated || c1.State != model.RequestExpired {
+		t.Fatalf("call ended: %+v %v", c1, change)
+	}
+	// Expiry sweep, listing filters and paging.
+	for i := 0; i < 3; i++ {
+		exp := base.Add(time.Duration(10+i) * time.Hour)
+		_, _, _ = s.UpsertRequest(ctx, StoredRequest{PlatformKey: fmt.Sprintf("join:%d", i), Request: model.Request{AccountID: "a1",
+			Kind: model.RequestKindJoin, From: &model.Sender{ID: "u"}, CreatedAt: base.Add(time.Duration(3+i) * time.Hour), ExpiresAt: &exp}})
+	}
+	expired, err := s.ExpireRequests(ctx, base.Add(11*time.Hour+time.Minute))
+	if err != nil || len(expired) != 2 || expired[0].State != model.RequestExpired {
+		t.Fatalf("expire: %+v %v", expired, err)
+	}
+	all, next, err := s.ListRequests(ctx, "a1", RequestFilter{}, "", 3)
+	if err != nil || len(all) != 3 || next == "" || all[0].Kind != model.RequestKindJoin {
+		t.Fatalf("list page 1: %+v %q %v", all, next, err)
+	}
+	rest, next, _ := s.ListRequests(ctx, "a1", RequestFilter{}, next, 3)
+	if len(rest) != 2 || next != "" {
+		t.Fatalf("list page 2: %+v %q", rest, next)
+	}
+	pending, _, _ := s.ListRequests(ctx, "a1", RequestFilter{State: model.RequestPending}, "", 10)
+	if len(pending) != 2 {
+		t.Fatalf("pending: %+v", pending)
+	}
+	calls, _, _ := s.ListRequests(ctx, "a1", RequestFilter{Kind: model.RequestKindCall}, "", 10)
+	if len(calls) != 1 {
+		t.Fatalf("calls: %+v", calls)
+	}
+	if n, _ := s.PendingRequests(ctx, "a1"); n != 2 {
+		t.Fatalf("pending count: %d", n)
+	}
+	if _, err := s.GetRequest(ctx, "a1", "req_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing: %v", err)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
+func TestPersonsStore(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	for _, a := range []string{"wa1", "tg1", "mx1"} {
+		if err := s.CreateAccount(ctx, a, "fake", "", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contact := func(account, id, phone, name string) {
+		t.Helper()
+		if _, err := s.UpsertContact(ctx, account, model.Contact{ID: id, Phone: phone, Names: model.Names{Profile: name}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	contact("wa1", "8613800000000@s.whatsapp.net", "+86 138-0000-0000", "Alice")
+	contact("tg1", "12345", "+8613800000000", "Alice T")
+	contact("mx1", "@alice:example.org", "", "Alice M")
+	contact("tg1", "999", "+1 (555) 010-0000", "Bob")
+	contact("wa1", "15550100000@s.whatsapp.net", "+15550100000", "Bob W")
+	contact("wa1", "self@s.whatsapp.net", "+15550100000", "Me")
+	if _, err := s.UpsertContact(ctx, "wa1", model.Contact{ID: "self@s.whatsapp.net", IsSelf: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Phone matches ignore formatting, stay on other accounts and skip self contacts.
+	wa := LinkRef{AccountID: "wa1", UserID: "8613800000000@s.whatsapp.net"}
+	tg := LinkRef{AccountID: "tg1", UserID: "12345"}
+	mx := LinkRef{AccountID: "mx1", UserID: "@alice:example.org"}
+	matches, err := s.PhoneMatches(ctx, wa)
+	if err != nil || len(matches) != 1 || matches[0].LinkRef != tg || matches[0].PersonID != "" {
+		t.Fatalf("phone matches: %+v %v", matches, err)
+	}
+	if m, _ := s.PhoneMatches(ctx, mx); len(m) != 0 {
+		t.Fatalf("no phone, no matches: %+v", m)
+	}
+
+	// Suggestions: both phone groups, self excluded.
+	sugg, err := s.SuggestPersons(ctx)
+	if err != nil || len(sugg) != 2 || sugg[0].Reason != "phone" {
+		t.Fatalf("suggest: %+v %v", sugg, err)
+	}
+	for _, g := range sugg {
+		for _, c := range g.Contacts {
+			if c.UserID == "self@s.whatsapp.net" {
+				t.Fatal("self contact suggested")
+			}
+		}
+	}
+
+	p, err := s.CreatePerson(ctx, model.Person{Name: "Alice Wang", Tags: []string{"work"}, Notes: "PM"})
+	if err != nil || p.ID == "" || len(p.Links) != 0 || p.Tags[0] != "work" {
+		t.Fatalf("create: %+v %v", p, err)
+	}
+	if err := s.LinkContact(ctx, p.ID, wa, model.LinkPhone); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkContact(ctx, p.ID, tg, model.LinkPhone); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkContact(ctx, p.ID, mx, model.LinkManual); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.LinkContact(ctx, p.ID, LinkRef{AccountID: "wa1", UserID: "nobody"}, model.LinkManual); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown contact: %v", err)
+	}
+	other, _ := s.CreatePerson(ctx, model.Person{Name: "Other"})
+	if err := s.LinkContact(ctx, other.ID, tg, model.LinkManual); !errors.Is(err, ErrConflict) {
+		t.Fatalf("linked elsewhere: %v", err)
+	}
+	if err := s.LinkContact(ctx, p.ID, tg, model.LinkManual); err != nil {
+		t.Fatalf("relinking to the same person is a no-op: %v", err)
+	}
+	got, err := s.GetPerson(ctx, p.ID)
+	if err != nil || len(got.Links) != 3 || got.Links[0].Platform != "fake" || got.Links[0].Name == "" {
+		t.Fatalf("get: %+v %v", got, err)
+	}
+	if c, _ := s.GetContact(ctx, "tg1", "12345"); c.PersonID != p.ID {
+		t.Fatalf("contact person_id: %+v", c)
+	}
+	if id, _ := s.PersonOf(ctx, mx); id != p.ID {
+		t.Fatalf("person of: %q", id)
+	}
+	if sugg, _ = s.SuggestPersons(ctx); len(sugg) != 1 {
+		t.Fatalf("linked contacts drop out of suggestions: %+v", sugg)
+	}
+
+	// Chats: a WhatsApp-style DM (chat id = user id) and a Matrix-style DM room found through members.
+	for _, c := range []model.Chat{
+		{AccountID: "wa1", ID: wa.UserID, Kind: model.ChatDirect, Name: "Alice"},
+		{AccountID: "mx1", ID: "!dm:example.org", Kind: model.ChatDirect},
+		{AccountID: "mx1", ID: "!group:example.org", Kind: model.ChatGroup, Name: "Team"},
+	} {
+		if _, err := s.UpsertChat(ctx, c); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, room := range []string{"!dm:example.org", "!group:example.org"} {
+		if err := s.UpsertMember(ctx, "mx1", room, mx.UserID, "", "member", false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, m := range []model.Message{
+		{AccountID: "wa1", ChatID: wa.UserID, ID: "w1", Sender: model.Sender{ID: wa.UserID}, Timestamp: time.Unix(1000, 0), Content: model.Content{Type: "text", Text: "wa dm"}},
+		{AccountID: "mx1", ChatID: "!dm:example.org", ID: "$m1", Sender: model.Sender{ID: mx.UserID}, Timestamp: time.Unix(2000, 0), Content: model.Content{Type: "text", Text: "mx dm"}},
+		{AccountID: "mx1", ChatID: "!group:example.org", ID: "$g1", Sender: model.Sender{ID: mx.UserID}, Timestamp: time.Unix(3000, 0), Content: model.Content{Type: "text", Text: "mx group"}},
+		{AccountID: "mx1", ChatID: "!group:example.org", ID: "$g2", Sender: model.Sender{ID: "@carol:example.org"}, Timestamp: time.Unix(4000, 0), Content: model.Content{Type: "text", Text: "carol"}},
+	} {
+		seq, _, err := s.InsertMessage(ctx, m, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.TouchChat(ctx, m.AccountID, m.ChatID, m.Timestamp, seq, true); err != nil {
+			t.Fatalf("touch %d: %v", i, err)
+		}
+	}
+	if ch, _ := s.GetChat(ctx, "mx1", "!dm:example.org"); ch.PersonID != p.ID {
+		t.Fatalf("matrix dm person_id: %+v", ch)
+	}
+	if ch, _ := s.GetChat(ctx, "mx1", "!group:example.org"); ch.PersonID != "" {
+		t.Fatalf("groups have no person: %+v", ch)
+	}
+	if list, _, _ := s.ListChats(ctx, "mx1", ChatFilter{Person: p.ID}, "", 10); len(list) != 1 || list[0].ID != "!dm:example.org" {
+		t.Fatalf("chat filter: %+v", list)
+	}
+	chats, err := s.PersonChats(ctx, p.ID)
+	if err != nil || len(chats) != 2 {
+		t.Fatalf("person chats: %+v %v", chats, err)
+	}
+	if got, _ = s.GetPerson(ctx, p.ID); len(got.Channels) != 2 {
+		t.Fatalf("channels: %+v", got.Channels)
+	}
+	direct, next, err := s.PersonMessages(ctx, p.ID, "direct", "", 10)
+	if err != nil || len(direct) != 2 || direct[0].Content.Text != "mx dm" || next != "" || direct[0].Sender.PersonID != p.ID {
+		t.Fatalf("direct messages: %+v %q %v", direct, next, err)
+	}
+	all, next, _ := s.PersonMessages(ctx, p.ID, "all", "", 2)
+	if len(all) != 2 || all[0].Content.Text != "mx group" || next == "" {
+		t.Fatalf("all messages page 1: %+v %q", all, next)
+	}
+	if rest, _, _ := s.PersonMessages(ctx, p.ID, "all", next, 2); len(rest) != 1 || rest[0].Content.Text != "wa dm" {
+		t.Fatalf("all messages page 2: %+v", rest)
+	}
+
+	// Unlinking records the split pairs, so phone matching no longer offers them.
+	if err := s.UnlinkContact(ctx, p.ID, tg); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.UnlinkContact(ctx, p.ID, tg); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unlink twice: %v", err)
+	}
+	if m, _ := s.PhoneMatches(ctx, tg); len(m) != 0 {
+		t.Fatalf("split pair must not match again: %+v", m)
+	}
+
+	// Listing, patching, merging, deleting.
+	name, notes := "Alice W.", "PM at Acme"
+	if got, err = s.UpdatePerson(ctx, p.ID, &name, &notes, []string{"work", "vip"}); err != nil || got.Name != name || len(got.Tags) != 2 {
+		t.Fatalf("update: %+v %v", got, err)
+	}
+	if err := s.LinkContact(ctx, other.ID, tg, model.LinkManual); err != nil {
+		t.Fatal(err)
+	}
+	if list, _, _ := s.ListPersons(ctx, PersonFilter{Tag: "vip"}, "", 10); len(list) != 1 || list[0].ID != p.ID {
+		t.Fatalf("tag filter: %+v", list)
+	}
+	if list, _, _ := s.ListPersons(ctx, PersonFilter{Q: "alice t"}, "", 10); len(list) != 1 || list[0].ID != other.ID {
+		t.Fatalf("q matches linked contact names: %+v", list)
+	}
+	merged, err := s.MergePersons(ctx, p.ID, []string{other.ID})
+	if err != nil || len(merged.Links) != 3 {
+		t.Fatalf("merge: %+v %v", merged, err)
+	}
+	if _, err := s.GetPerson(ctx, other.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("merged source must be gone: %v", err)
+	}
+	unlinked, err := s.DeletePerson(ctx, p.ID)
+	if err != nil || len(unlinked) != 3 {
+		t.Fatalf("delete: %+v %v", unlinked, err)
+	}
+	if c, _ := s.GetContact(ctx, "tg1", "12345"); c.PersonID != "" {
+		t.Fatalf("person_id after delete: %+v", c)
 	}
 }

@@ -161,8 +161,9 @@ func (s *Store) AccountStats(ctx context.Context, id string) (model.AccountStats
 		(SELECT COUNT(*) FROM chats WHERE account_id = ?),
 		(SELECT COUNT(*) FROM messages WHERE account_id = ?),
 		(SELECT MAX(received_at) FROM messages WHERE account_id = ? AND from_me = 0),
-		(SELECT MAX(id) FROM events WHERE account_id = ?)`, id, id, id, id).
-		Scan(&st.Chats, &st.Messages, &lastIn, &lastEv)
+		(SELECT MAX(id) FROM events WHERE account_id = ?),
+		(SELECT COUNT(*) FROM requests WHERE account_id = ? AND state = 'pending')`, id, id, id, id, id).
+		Scan(&st.Chats, &st.Messages, &lastIn, &lastEv, &st.RequestsPending)
 	if err != nil {
 		return st, fmt.Errorf("account stats: %w", err)
 	}

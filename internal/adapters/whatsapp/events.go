@@ -17,7 +17,11 @@ import (
 func (acc *account) handleEvent(evt any) {
 	switch e := evt.(type) {
 	case *events.Message:
-		acc.rep.Events(acc.convertMessage(e)...)
+		evs := acc.convertMessage(e)
+		if r := inviteRequest(e); r != nil {
+			evs = append(evs, adapter.Event{Kind: adapter.EvRequest, Request: r})
+		}
+		acc.rep.Events(evs...)
 	case *events.Receipt:
 		acc.rep.Events(acc.convertReceipt(e)...)
 	case *events.ChatPresence:
@@ -64,14 +68,16 @@ func (acc *account) handleEvent(evt any) {
 		chat := e.From.ToNonAD()
 		m := model.Message{ID: e.CallID, ChatID: chat.String(), Sender: model.Sender{ID: e.CallCreator.ToNonAD().String()}, Timestamp: e.Timestamp.UTC(),
 			Content: model.Content{Type: model.ContentCall, Call: &model.Call{Kind: "voice", State: "ringing"}}}
-		acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: &model.Chat{ID: chat.String(), Kind: chatKind(chat)}})
+		acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: &model.Chat{ID: chat.String(), Kind: chatKind(chat)}},
+			adapter.Event{Kind: adapter.EvRequest, Request: callRequest(e)})
 	case *events.CallTerminate:
 		state := "ended"
 		if e.Reason == "timeout" {
 			state = "missed"
 		}
 		acc.rep.Events(adapter.Event{Kind: adapter.EvMessageUpdate, ChatID: e.From.ToNonAD().String(), MessageID: e.CallID,
-			Content: &model.Content{Type: model.ContentCall, Call: &model.Call{Kind: "voice", State: state}}, At: e.Timestamp.UTC()})
+			Content: &model.Content{Type: model.ContentCall, Call: &model.Call{Kind: "voice", State: state}}, At: e.Timestamp.UTC()},
+			adapter.Event{Kind: adapter.EvRequest, Request: callEnded(e.CallID)})
 	case *events.Picture:
 		acc.rep.Events(adapter.Event{Kind: adapter.EvPlatform, PlatformType: "picture", ChatID: e.JID.ToNonAD().String(), UserID: e.Author.ToNonAD().String(),
 			Raw: []byte(fmt.Sprintf(`{"picture_id":%q,"removed":%t}`, e.PictureID, e.Remove))})
