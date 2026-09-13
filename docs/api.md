@@ -337,7 +337,7 @@ Every platform has several names for one person. The bridge exposes all of them 
 resolved `name`, so consumers that do not care get a sensible label without logic.
 
 | `names.*` | Who sets it | WhatsApp | Telegram | Matrix | WeChat |
-|---|---|---|---|---|---|
+|---|---|---|---|---|---|---|
 | `alias` | the account owner, private | address-book name (from phone sync) | contact first/last as saved | none (bridge-local only) | 备注 remark |
 | `profile` | the user, public | push name | first + last | displayname | 昵称 |
 | `username` | the user, public, unique | none | `@username` | localpart | 微信号 |
@@ -419,6 +419,7 @@ built-in adapters:
 | `whatsapp` | — | `device_name` | `qr`, `phone` (pairing code) |
 | `telegram` | — (`api_id` / `api_hash` come from `adapters.telegram.*`; either may be overridden per account) | `device_name` | `phone` (code, then 2FA password if enabled), `qr` (also asks for the 2FA password) |
 | `matrix` | `homeserver` (base URL) | `device_name` | `password` (user + password), `token` (user + access token). Rooms are end-to-end encrypted transparently; see §4.7a |
+| `signal` | — | `network`: mautrix-signal connector settings as a YAML string or an object (`device_name`, `displayname_template`, `sync_contacts_on_startup`, …; defaults from the connector's example config) | `qr` (link chat-bridge as a secondary device: scan the `sgnl://linkdevice` URI). Only present in builds with `-tags signal`; see `adapter-protocol.md` §11 |
 
 ### 4.2 Login (see §5)
 
@@ -701,27 +702,27 @@ envelope. A `: keepalive` comment every 15 s.
 
 ## 7. Per-platform mapping
 
-| Concept | WhatsApp | Telegram | Matrix | WeChat |
-|---|---|---|---|---|
-| `chat_id` | JID (`…@s.whatsapp.net`, `…@g.us`) | numeric peer id (`-100…` for supergroups) | room id `!x:server` | wxid / `…@chatroom` |
-| `user_id` | JID | numeric user id | `@user:server` | wxid |
-| `message_id` | WA message id | `chat_id:msg_id` | event id `$…` | msg id |
-| `handle` | `+phone` | `+phone` or `@username` | `@user:server` | wxid |
-| `kind: channel` | broadcast / newsletter | channel | none (use room with read-only power levels) | official account |
-| `thread_id` | none | forum topic id | thread root event id | none |
-| edit | no | yes | yes (`m.replace`) | no |
-| delete | yes (revoke, time-limited) | yes | yes (redaction) | yes (recall, 2 min) |
-| reactions | yes | yes | yes (`m.reaction`) | no |
-| `format` | limited markdown | markdown subset ↔ entities (bold, italic, strike, code, pre, links, mentions) | HTML | plain only |
-| receipts | delivered + read | read (private only) | read | none |
-| history backfill | no (on-device only) | yes | yes | no |
-| end-to-end encryption | always (protocol) | secret chats not supported | yes (megolm; `keys.manage`) | always (protocol) |
-| owner alias | phone address book (read-only) | contact name (read/write) | bridge-local | 备注 (read/write) |
-| per-chat nickname | none | none | room displayname | 群昵称 |
-| contact request | none (anyone can message) | none | none | yes (must accept) |
-| chat invite | added directly, or invite link | invite link / added | `m.room.member invite` | invited, must confirm for >N members |
-| incoming call | event; reject only | event; reject only | `m.call.*`; reject only | event; reject only |
-| payment content | none | invoice / Stars | none | 转账 / 红包 |
+| Concept | WhatsApp | Telegram | Matrix | Signal | WeChat |
+|---|---|---|---|---|---|
+| `chat_id` | JID (`…@s.whatsapp.net`, `…@g.us`) | numeric peer id (`-100…` for supergroups) | room id `!x:server` | peer ACI UUID (direct), group identifier (base64) | wxid / `…@chatroom` |
+| `user_id` | JID | numeric user id | `@user:server` | ACI UUID (`PNI:<uuid>` before the ACI is known) | wxid |
+| `message_id` | WA message id | `chat_id:msg_id` | event id `$…` | `<sender uuid>|<timestamp ms>` | msg id |
+| `handle` | `+phone` | `+phone` or `@username` | `@user:server` | `+phone` (when the contact shares it) | wxid |
+| `kind: channel` | broadcast / newsletter | channel | none (use room with read-only power levels) | none (announcement groups are groups) | official account |
+| `thread_id` | none | forum topic id | thread root event id | none | none |
+| edit | no | yes | yes (`m.replace`) | yes | no |
+| delete | yes (revoke, time-limited) | yes | yes (redaction) | yes (remote delete) | yes (recall, 2 min) |
+| reactions | yes | yes | yes (`m.reaction`) | yes | no |
+| `format` | limited markdown | markdown subset ↔ entities (bold, italic, strike, code, pre, links, mentions) | HTML | HTML (bold, italic, strike, monospace, spoiler) | plain only |
+| receipts | delivered + read | read (private only) | read | delivered + read | none |
+| history backfill | no (on-device only) | yes | yes | no (a linked device only receives new traffic) | no |
+| end-to-end encryption | always (protocol) | secret chats not supported | yes (megolm; `keys.manage`) | always (protocol; keys live in `bridgev2.db`) | always (protocol) |
+| owner alias | phone address book (read-only) | contact name (read/write) | bridge-local | phone contacts synced on connect (read-only) | 备注 (read/write) |
+| per-chat nickname | none | none | room displayname | none | 群昵称 |
+| contact request | none (anyone can message) | none | none | message requests (accepted in the Signal app) | yes (must accept) |
+| chat invite | added directly, or invite link | invite link / added | `m.room.member invite` | added directly, or group link | invited, must confirm for >N members |
+| incoming call | event; reject only | event; reject only | `m.call.*`; reject only | not bridged | event; reject only |
+| payment content | none | invoice / Stars | none | none (payments not bridged) | 转账 / 红包 |
 
 WeChat has no supported client protocol; any adapter there is best-effort and must advertise a
 narrow capability list.
@@ -755,10 +756,11 @@ Full design in `storage.md`. The contract the API relies on:
 ## 11. Adding a platform
 
 The consumer API never changes when a platform is added. A platform is an adapter that speaks the
-adapter protocol (`adapter-protocol.md`): in-process Go for whatsmeow, or any language over a
-WebSocket JSON-RPC connection for everything else. The adapter declares capabilities, login flows,
-and a config schema at connect time, and the core publishes them under `GET /platforms`. Nothing
-in this document is specific to a language or a process boundary.
+adapter protocol (`adapter-protocol.md`): in-process Go (whatsmeow, gotd, mautrix-go), a hosted
+mautrix bridgev2 network connector (Signal today; `adapter-protocol.md` §11), or any language over
+a WebSocket JSON-RPC connection. The adapter declares capabilities, login flows, and a config
+schema at connect time, and the core publishes them under `GET /platforms`. Nothing in this
+document is specific to a language or a process boundary.
 
 ## 12. Migration from the current WhatsApp API
 

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-13 03:30 [progress]
+
+Task `20260913-0252-bridgev2-host-signal` (plan of the same id) completed: mautrix bridgev2 network connectors run as chat-bridge adapters; Signal is the first.
+
+- `internal/adapters/connector`: hosts any `bridgev2.NetworkConnector` behind `adapter.Adapter` by implementing bridgev2's Matrix side (`MatrixConnector` / `MatrixAPI`) as a virtual homeserver — portals → chats, ghosts → contacts, ghost intents' Matrix events → `message` / `message_update` / `message_delete` / `reaction` / `receipt` / `typing` / `member` / `chat` events, `UploadMedia` → `Sink.PutMedia`, `BatchSend` → backfill, bridge states → account statuses; one bridge per account on `accounts/<id>/bridgev2.db` (modernc); login steps mapped onto the step machine (`user_input` → `input`, `display_and_wait` → `display` with `Wait` pushed via `login.step`, `complete` → `done`); sends are synthetic Matrix events resolved by `SendMessageStatus`; edit / delete / react / read / typing / resolve / contacts map to the optional `*HandlingNetworkAPI` interfaces and the advertised capabilities follow them (probe client + connected logins)
+- `internal/adapters/matrixcontent`: Matrix content ↔ `model.Content` moved out of the Matrix adapter and shared with the host (`Convert`, `Build`)
+- `internal/adapters/signal` (build tag `signal`): mautrix-signal v0.2608.0's connector hosted in-process; `cmd/chat-bridge` registers it when built with the tag; connector settings come from the account's `config.network`
+- Build: Dockerfile gains a `libsignal` Rust stage (clones mautrix-signal, `build-rust.sh`), the Go stage is `CGO_ENABLED=1` with `-tags goolm,signal`, the runtime image moves from distroless-static to alpine (musl, libstdc++, zlib); `scripts/build-libsignal.sh` produces `libsignal_ffi.a` in `.tmp/libsignal/` for local tagged builds; the pure-Go gate (`-tags goolm`) is unchanged and a second tagged gate line is skipped when the library is absent
+- Docs: `adapter-protocol.md` §11 "Hosting a mautrix bridgev2 connector" (walk-through and checklist renumbered to §12/§13), `api.md` §4.1 Signal config and §7 Signal column, README, AGENTS, architecture
+- Tests: fake bridgev2 connector round-trip (login, inbound message with chat/contact hints, duplicate suppression, send, chat info, restart from `bridgev2.db`, removal) plus media, reaction, receipt, typing, edit and delete conversions
+
 ## 2026-09-13 02:25 [progress]
 
 Task `20260913-0151-telegram-matrix-hardening` (plan of the same id) completed: Telegram and Matrix adapters hardened.

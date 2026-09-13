@@ -1,10 +1,12 @@
 # chat-bridge
 
-A self-hosted Go service that owns WhatsApp, Telegram, and Matrix sessions, stores every message and
-attachment in SQLite, and exposes one platform-agnostic HTTP API (REST, long-poll, SSE, webhooks).
-Consumers such as a personal assistant or a Matrix bridge talk to the API instead of to each chat
-platform. Platforms are adapters: three ship in-process (whatsmeow, gotd, mautrix-go), and any
-other language can add one over WebSocket + JSON-RPC (`docs/adapter-protocol.md`).
+A self-hosted Go service that owns WhatsApp, Telegram, Matrix, and Signal sessions, stores every
+message and attachment in SQLite, and exposes one platform-agnostic HTTP API (REST, long-poll, SSE,
+webhooks). Consumers such as a personal assistant or a Matrix bridge talk to the API instead of to
+each chat platform. Platforms are adapters: three ship in-process (whatsmeow, gotd, mautrix-go),
+Signal is mautrix-signal's bridgev2 connector hosted behind the same contract (any other bridgev2
+network can be added the same way), and any other language can add one over WebSocket + JSON-RPC
+(`docs/adapter-protocol.md`).
 
 ## Quick start
 
@@ -26,6 +28,13 @@ go run -tags goolm ./cmd/chat-bridge -config chat-bridge.yaml
 default backend needs cgo and libolm); every `go build`, `go test`, and `go vet` in this
 repository carries it.
 
+`-tags signal` adds the Signal adapter. It links libsignal (Rust) through cgo, so it needs
+`libsignal_ffi.a`, a C++ toolchain and zlib: the Docker build produces all of it (the `libsignal`
+stage clones mautrix-signal and runs its `build-rust.sh`); on a developer machine
+`scripts/build-libsignal.sh` builds the library in a throwaway container into `.tmp/libsignal/`,
+then `CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go build -tags goolm,signal ./...`. Without the tag the
+binary stays pure Go and Signal is simply absent from `GET /platforms`.
+
 First account, WhatsApp via QR:
 
 ```bash
@@ -40,7 +49,8 @@ password… described by the step machine) → chats, messages, media, contacts 
 `/accounts/{a}/…` → events on `/events`. Telegram needs `api_id`/`api_hash` (once, under
 `adapters.telegram` in the config, or per account in `config`), Matrix a `homeserver`. Matrix
 rooms are end-to-end encrypted transparently; `POST /accounts/{a}/keys/verify` with the
-account's recovery key cross-signs the bridge device and restores the key backup.
+account's recovery key cross-signs the bridge device and restores the key backup. Signal links
+as a secondary device: `{"flow":"qr"}` returns the `sgnl://linkdevice` URI to scan.
 
 ## Layout
 
@@ -54,7 +64,11 @@ internal/adapter/       the adapter contract (+ fake for tests)
 internal/adapters/
   base/                 shared scaffolding for in-process adapters
   whatsapp/ telegram/ matrix/
+  matrixcontent/        Matrix event content <-> model.Content (shared by matrix and connector)
+  connector/            host for mautrix bridgev2 network connectors (virtual Matrix side)
+  signal/               Signal = hosted mautrix-signal connector (build tag `signal`, cgo)
   remote/               WebSocket + JSON-RPC host for out-of-process adapters
+scripts/                build-libsignal.sh (libsignal_ffi.a for local `-tags signal` builds)
 docs/                   specs, architecture, PMA task/plan tracking
 ```
 
@@ -62,9 +76,11 @@ docs/                   specs, architecture, PMA task/plan tracking
 
 ```bash
 test -z "$(gofmt -l .)" && go vet -tags goolm ./... && golangci-lint run && go test -tags goolm ./... && go build -tags goolm ./...
+# with libsignal available (see above); skipped when .tmp/libsignal/libsignal_ffi.a is absent
+CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go vet -tags goolm,signal ./... && CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go build -tags goolm,signal ./...
 ```
 
-`docker build --target test .` runs `go vet` and the unit tests in the build toolchain.
+`docker build --target test .` runs `go vet` and the unit tests with both tags in the build toolchain.
 `golangci-lint` (config in `.golangci.yml`) is expected on the developer machine; it is not part
 of the Docker build.
 

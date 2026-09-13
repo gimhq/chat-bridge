@@ -3,23 +3,18 @@ package matrix
 import (
 	"context"
 	"encoding/json"
-	"strconv"
-	"strings"
 	"time"
 
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
 	"gimhq/chat-bridge/internal/adapter"
+	"gimhq/chat-bridge/internal/adapters/matrixcontent"
 	"gimhq/chat-bridge/internal/model"
 )
 
-// remoteRef is stored per attachment so FetchMedia can download later. File is set for
-// encrypted attachments and carries the key needed to decrypt after download.
-type remoteRef struct {
-	URL  string                   `json:"url"`
-	File *event.EncryptedFileInfo `json:"file,omitempty"`
-}
+// remoteRef is the shared attachment reference (URL plus encryption info).
+type remoteRef = matrixcontent.RemoteRef
 
 func (acc *account) chatHint(room id.RoomID) *model.Chat {
 	return &model.Chat{ID: room.String(), Kind: acc.kindOf(room)}
@@ -64,69 +59,9 @@ func (acc *account) onMessage(_ context.Context, evt *event.Event) {
 	acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: acc.chatHint(evt.RoomID), Sender: userContact(evt.Sender, ""), Raw: raw, Backfill: !acc.isConnected()})
 }
 
-// convertContent maps m.room.message / m.sticker content.
+// convertContent maps Matrix content through the shared converter.
 func convertContent(c *event.MessageEventContent, typ event.Type, mediaID string) model.Content {
-	if typ == event.EventSticker {
-		return mediaContent(model.ContentSticker, "", mediaID, c)
-	}
-	switch c.MsgType {
-	case event.MsgText, event.MsgNotice, event.MsgEmote:
-		out := model.Content{Type: model.ContentText, Text: c.Body}
-		if c.Format == event.FormatHTML && c.FormattedBody != "" {
-			out.Format, out.Text = "html", c.FormattedBody
-		}
-		return out
-	case event.MsgImage:
-		return mediaContent(model.ContentImage, c.Body, mediaID, c)
-	case event.MsgVideo:
-		return mediaContent(model.ContentVideo, c.Body, mediaID, c)
-	case event.MsgAudio:
-		t := model.ContentAudio
-		if c.MSC3245Voice != nil {
-			t = model.ContentVoice
-		}
-		return mediaContent(t, c.Body, mediaID, c)
-	case event.MsgFile:
-		return mediaContent(model.ContentFile, c.Body, mediaID, c)
-	case event.MsgLocation:
-		loc := &model.Location{Name: c.Body}
-		if coords, ok := strings.CutPrefix(c.GeoURI, "geo:"); ok {
-			parts := strings.Split(strings.SplitN(coords, ";", 2)[0], ",")
-			if len(parts) >= 2 {
-				loc.Lat, _ = strconv.ParseFloat(parts[0], 64)
-				loc.Lon, _ = strconv.ParseFloat(parts[1], 64)
-			}
-		}
-		return model.Content{Type: model.ContentLocation, Text: c.Body, Location: loc}
-	}
-	return model.Content{Type: model.ContentUnsupported, Text: c.Body, Unsupported: &model.Unsupported{PlatformType: string(c.MsgType)}}
-}
-
-func mediaContent(t, caption, mediaID string, c *event.MessageEventContent) model.Content {
-	att := model.Attachment{MediaID: mediaID, State: model.MediaRemote}
-	if c.FileName != "" {
-		att.FileName = c.FileName
-	} else if t == model.ContentFile {
-		att.FileName = c.Body
-	}
-	if c.Info != nil {
-		att.Mime, att.Size, att.Width, att.Height, att.DurationMs = c.Info.MimeType, int64(c.Info.Size), c.Info.Width, c.Info.Height, int64(c.Info.Duration)
-	}
-	if att.Mime == "" {
-		att.Mime = "application/octet-stream"
-	}
-	// Caption is only a caption when a filename is present; otherwise body is the file name.
-	if c.FileName == "" || c.FileName == caption {
-		caption = ""
-	}
-	if c.File != nil {
-		att.RemoteRef, _ = json.Marshal(remoteRef{URL: string(c.File.URL), File: c.File})
-		return model.Content{Type: t, Text: caption, Attachments: []model.Attachment{att}}
-	}
-	if c.URL != "" {
-		att.RemoteRef, _ = json.Marshal(remoteRef{URL: string(c.URL)})
-	}
-	return model.Content{Type: t, Text: caption, Attachments: []model.Attachment{att}}
+	return matrixcontent.Convert(c, typ, mediaID)
 }
 
 func (acc *account) onReaction(_ context.Context, evt *event.Event) {

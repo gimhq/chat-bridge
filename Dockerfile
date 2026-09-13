@@ -1,10 +1,24 @@
 # syntax=docker/dockerfile:1.7
 
+# ---- libsignal stage (Rust) ---------------------------------------------------
+# The Signal adapter hosts mautrix-signal's connector, which links libsignal through cgo. The
+# Rust half is built here once per MAUTRIX_SIGNAL_VERSION and cached as a layer.
+FROM rust:1-alpine AS libsignal
+ARG MAUTRIX_SIGNAL_VERSION=v0.2608.0
+RUN apk add --no-cache git make cmake protoc musl-dev g++ clang-dev protobuf-dev
+WORKDIR /build
+RUN git clone --depth 1 --branch "${MAUTRIX_SIGNAL_VERSION}" https://github.com/mautrix/signal.git . \
+    && ./build-rust.sh \
+    && cp pkg/libsignalgo/libsignal/target/*/libsignal_ffi.a /libsignal_ffi.a
+
 # ---- build stage --------------------------------------------------------------
 FROM golang:1.26-alpine AS build
+RUN apk add --no-cache build-base zlib-dev
 WORKDIR /src
 
-ENV CGO_ENABLED=0 GOTOOLCHAIN=local GOFLAGS=-trimpath
+# cgo is needed for libsignal only; everything else stays pure Go (`goolm` for Matrix E2EE).
+ENV CGO_ENABLED=1 GOTOOLCHAIN=local GOFLAGS=-trimpath LIBRARY_PATH=/usr/local/lib
+COPY --from=libsignal /libsignal_ffi.a /usr/local/lib/
 
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod go mod download
@@ -15,17 +29,20 @@ COPY . .
 FROM build AS test
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go vet -tags goolm ./... && go test -tags goolm ./...
+    go vet -tags goolm,signal ./... && go test -tags goolm,signal ./...
 
 FROM build AS compile
 ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -tags goolm -ldflags="-s -w -X main.version=${VERSION}" -o /out/chat-bridge ./cmd/chat-bridge \
+    go build -tags goolm,signal -ldflags="-s -w -X main.version=${VERSION}" -o /out/chat-bridge ./cmd/chat-bridge \
     && mkdir -p /empty
 
 # ---- runtime stage ------------------------------------------------------------
-FROM gcr.io/distroless/static-debian12:nonroot
+# alpine rather than distroless: the cgo binary needs musl, libstdc++ and zlib at runtime.
+FROM alpine:3.22
+RUN apk add --no-cache ca-certificates tzdata libstdc++ zlib \
+    && addgroup -g 65532 nonroot && adduser -D -u 65532 -G nonroot nonroot
 COPY --from=compile /out/chat-bridge /chat-bridge
 # Pre-create the data directory owned by the nonroot user so named volumes inherit it.
 COPY --from=compile --chown=nonroot:nonroot /empty /data

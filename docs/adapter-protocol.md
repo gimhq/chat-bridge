@@ -16,9 +16,11 @@ consumers (assistant, Matrix bridge, CLI)
 └──────┬──────────────────────┬───────────────┘
        │ Go interface         │ WebSocket + JSON-RPC 2.0  (this document)
        ▼                      ▼
- in-process adapter      out-of-process adapters
- whatsapp (whatsmeow)    telegram (Python/Telethon) · matrix (TS/matrix-js-sdk)
-                         wechat (any) · signal (Java/signal-cli) · …
+ in-process adapters                        out-of-process adapters
+ whatsapp (whatsmeow) · telegram (gotd)      any platform in any language:
+ matrix (mautrix-go)                         wechat · a second whatsapp host · …
+ hosted mautrix bridgev2 connectors (§11):
+ signal (libsignal, cgo) · …
 ```
 
 The core owns everything a consumer sees. An adapter owns exactly one thing: talking to its
@@ -350,10 +352,52 @@ In-process adapters live under `internal/adapters/<platform>/` and share
 sink with timeouts (`base.Reporter`), the login-flow state (`base.Login` with `Start`, `Current`,
 `Update`, `SetStep`, `Cancel`), step constructors (`Input`, `Display`, `Failed`), and
 `PlatformErr`. The built-in `whatsapp` (whatsmeow), `telegram` (gotd/td), and `matrix`
-(mautrix-go, unencrypted rooms only) adapters are the reference implementations; a new platform is
-one package that fills the same `Adapter` methods and is registered in `cmd/chat-bridge/main.go`.
+(mautrix-go) adapters are the reference implementations; a new platform is one package that fills
+the same `Adapter` methods and is registered in `cmd/chat-bridge/main.go`. Platforms that already
+have a mautrix bridgev2 connector need no adapter code at all: the `connector` host wraps them (§11).
 
-## 11. Minimal adapter walk-through (TypeScript, Matrix)
+## 11. Hosting a mautrix bridgev2 connector
+
+`maunium.net/go/mautrix/bridgev2` splits a Matrix bridge into a *network connector* (the platform
+side: login, chats, messages) and a *Matrix connector* (the homeserver side). chat-bridge
+implements the homeserver side as a **virtual Matrix** in `internal/adapters/connector`, so any
+bridgev2 network connector runs unmodified as an in-process adapter:
+
+```go
+// internal/adapters/signal/signal.go (build tag `signal`)
+connector.New(log, "signal", func() bridgev2.NetworkConnector { return &sigconn.SignalConnector{} })
+```
+
+One bridgev2 `Bridge` runs per account, with its own database `accounts/<id>/bridgev2.db`
+(modernc SQLite through `dbutil`) holding the bridge's users, logins, portals, ghosts, messages
+and reactions. The account is the bridge user `@<account>:chat-bridge`; its single `UserLogin` is
+the platform session. Mapping:
+
+| bridgev2 | chat-bridge |
+|---|---|
+| portal (`PortalKey.ID`), room `!…:chat-bridge` | chat `id` = portal id; `kind` from the portal's room type (DM → `direct`, else `group`) |
+| ghost (`@g_<base64url(user id)>:chat-bridge`) | contact / sender `id` = network user id; display name → `names.profile`, `tel:` identifiers → `phone` |
+| `Message.ID` (+ `#<part id>` for extra parts) | message `id`; `ReplyTo` / `ThreadRoot` → `reply_to` / `thread_id` |
+| ghost intent `SendMessage` (`m.room.message`, `m.sticker`, `m.reaction`, redaction, `m.replace`) | `message`, `reaction`, `message_delete`, `message_update` events; `from_me` when the sender is the login's own user id |
+| `SendState` member / name, `CreateRoom` | `member`, `chat` events (with participants) |
+| `MarkRead`, `MarkTyping` | `receipt` (read), `typing` |
+| `UploadMedia` (attachments the connector downloaded during conversion) | `Sink.PutMedia`; the content URI `mxc://chat-bridge/<media_id>` names the stored media, so the message arrives with the attachment already `ready` |
+| `BatchSend` (backfill) | the same conversion with `backfill: true` |
+| `SendBridgeStatus` (`CONNECTED`, `TRANSIENT_DISCONNECT`, `BAD_CREDENTIALS` / `LOGGED_OUT`, `UNKNOWN_ERROR`) | account status `connected`, `disconnected`, `unpaired`, `error` |
+| `LoginProcess` steps `user_input`, `display_and_wait` (qr / code), `complete` | `input` (field types phone / password / code / url / text), `display`, `done`; `cookies`, `client_http`, `webauthn` become `failed` (`unsupported`) |
+| `NetworkAPI.HandleMatrixMessage` and the optional `Edit` / `Redaction` / `Reaction` / `ReadReceipt` / `Typing` / `IdentifierResolving` / `ContactListing` interfaces | `message.send` (a synthetic Matrix event from the account's user, resolved by `SendMessageStatus`), `message.edit`, `message.delete`, `message.react`, `chat.read`, `chat.typing`, `chat.resolve`, `contacts.list`; capabilities are derived from which interfaces the connected login implements |
+
+Outbound attachments are served back to the connector through `DownloadMedia` from the send
+request's `MediaSource`. The connector's YAML config is loaded from its own example config and
+overlaid with the account's `config.network` (a YAML string or an object with the same keys, e.g.
+`device_name` for Signal). Everything the virtual homeserver cannot answer (`GetEvent`, power
+levels beyond the bot, room tags) is a no-op.
+
+Adding another bridgev2 network (Meta, Slack, Discord, Bluesky, …) is a package like
+`internal/adapters/signal`: import the connector, call `connector.New`, register it in
+`cmd/chat-bridge`. Only Signal needs cgo (libsignal); the rest are pure Go.
+
+## 12. Minimal adapter walk-through (TypeScript, Matrix)
 
 ```ts
 const ws = new WebSocket("ws://core:8080/adapter/v1", { headers: { Authorization: `Bearer ${TOKEN}` } });
@@ -399,7 +443,7 @@ setInterval(async () => { if (queue.length) { const batch = queue.splice(0, 100)
 An adapter is complete when it passes the conformance list below; everything else is
 platform-specific.
 
-## 12. Conformance checklist
+## 13. Conformance checklist
 
 - [ ] `hello` with truthful capabilities; every advertised capability has a working method
 - [ ] `status` for each account after hello and on every transition, `self` present when connected

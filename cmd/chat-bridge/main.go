@@ -72,6 +72,9 @@ func run() error {
 	c.Register(whatsapp.New(log.With("adapter", "whatsapp")))
 	c.Register(telegram.New(log.With("adapter", "telegram"), telegram.Defaults{AppID: cfg.Adapters.Telegram.APIID, AppHash: cfg.Adapters.Telegram.APIHash}))
 	c.Register(matrix.New(log.With("adapter", "matrix")))
+	for _, a := range extraAdapters(log) {
+		c.Register(a)
+	}
 	if err := c.Start(ctx); err != nil {
 		return err
 	}
