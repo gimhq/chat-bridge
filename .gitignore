@@ -1,0 +1,43 @@
+# Build artifacts
+bin/
+/chat-bridge
+
+# Runtime data
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Local config (may contain the server token)
+/chat-bridge.yaml
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Test and coverage output
+coverage.out
+*.coverprofile
+*.test
+
+# Scratch
+.tmp/
+tmp/
+
+# Logs
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db

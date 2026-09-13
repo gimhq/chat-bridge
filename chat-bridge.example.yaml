@@ -1,0 +1,26 @@
+# chat-bridge configuration. Copy to chat-bridge.yaml (picked up from the working directory),
+# or point at it with `chat-bridge -config /path/to/file.yaml` or CHATBRIDGE_CONFIG=/path.
+#
+# Precedence: built-in defaults < this file < environment. Every key maps to an environment
+# variable CHATBRIDGE_<SECTION>_<KEY>, e.g. media.auto_download_max_mb → CHATBRIDGE_MEDIA_AUTO_DOWNLOAD_MAX_MB.
+
+server:
+  addr: ":8080"                       # listen address
+  token: "change-me-to-a-long-random-string"   # consumer bearer token, at least 16 characters
+  # token_file: /run/secrets/chat-bridge-token  # alternative: read the token from a file (Docker secrets)
+  # adapter_token: "another-long-random-string"  # enables /adapter/v1 for adapters written in other languages
+  # public_url: https://bridge.example.org        # base URL remote adapters use for media transfer
+
+storage:
+  data_dir: ./data                    # chatbridge.db, media/, accounts/<id>/ (relative to the working directory)
+
+media:
+  auto_download: [image, voice, sticker]   # content types fetched eagerly; others stay `remote` until requested
+  auto_download_max_mb: 16            # larger attachments stay `remote`
+  max_upload_mb: 64                   # cap for POST /v1/accounts/{a}/media
+
+events:
+  retention_days: 7                   # event log retention (typing/presence 1h, platform.event 24h are fixed)
+
+log:
+  level: info                         # debug | info | warn | error

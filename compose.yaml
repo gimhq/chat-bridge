@@ -1,0 +1,14 @@
+services:
+  chat-bridge:
+    build: .
+    image: chat-bridge:latest
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - ./data:/data
+      # Optional file config; environment variables from .env still override it.
+      # - ./chat-bridge.yaml:/etc/chat-bridge/chat-bridge.yaml:ro
+    # environment:
+    #   CHATBRIDGE_CONFIG: /etc/chat-bridge/chat-bridge.yaml

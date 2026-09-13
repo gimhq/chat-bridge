@@ -1,0 +1,44 @@
+# Architecture
+
+```
+WhatsApp / Telegram / Matrix <-> in-process adapters --\
+                                                       +-> core <-> HTTP API (/v1) + long-poll + SSE + webhooks <-> consumers
+any platform, any language  <-> remote adapters -------/     |
+        (WebSocket + JSON-RPC on /adapter/v1)       SQLite (chatbridge.db) + media/<sha256> + accounts/<id>/
+```
+
+The core is the only owner of consumer-visible state. Adapters are interchangeable executors:
+each is identified by `platform/instance`, every account is bound to exactly one instance, and an
+adapter leaving or returning changes account status but never account data.
+
+## Components
+
+| Package | Role |
+|---|---|
+| `cmd/chat-bridge` | Entrypoint: loads config, opens store and media, registers adapters, serves HTTP |
+| `internal/config` | koanf config: defaults < YAML file < `CHATBRIDGE_*` env, validated at startup |
+| `internal/server` | Chi router, bearer-token auth on `/v1`, request handlers |
+| `internal/core` | Account lifecycle, message/chat/media orchestration, event fan-out |
+| `internal/adapter` | Contract between core and platform implementations (`fake` for tests) |
+| `internal/adapters/{whatsapp,telegram,matrix}` | Platform adapters (whatsmeow, gotd, mautrix-go); `base` holds shared helpers |
+| `internal/adapters/remote` | Hosts out-of-process adapters: WebSocket + JSON-RPC 2.0 on `/adapter/v1`, media PUT/GET |
+| `internal/store` | SQLite persistence: accounts, chats, contacts, messages, events, webhooks, media index |
+| `internal/media` | Content-addressed blob storage |
+| `internal/model` | Shared API/domain types |
+
+## Data flow
+
+- Inbound: adapter → `Sink.Events` → one SQLite transaction per batch (rows + `events` log) →
+  long-poll/SSE wake-up and webhook worker. Attachments are rows first; bytes arrive later
+  (`Sink.PutMedia`, auto-download policy in `media.auto_download`).
+- Outbound: HTTP → core validates capability and resolves uploads → adapter sends → core stores the
+  sent message and emits `message.new`. Replies with the same `client_id` return the stored row.
+- Login: a platform-agnostic step machine (`input` / `display` / `done` / `failed`) driven by the
+  adapter, recorded as `account.login_step` events.
+
+## Details
+
+- HTTP API: [api.md](api.md)
+- Adapter contract: [adapter-protocol.md](adapter-protocol.md)
+- Storage layout, schema, retention: [storage.md](storage.md)
+- Platform decision and roadmap: [whatsapp-feasibility.md](whatsapp-feasibility.md)

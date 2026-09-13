@@ -1,0 +1,270 @@
+package matrix
+
+import (
+	"context"
+	"encoding/json"
+	"strconv"
+	"strings"
+	"time"
+
+	"maunium.net/go/mautrix/event"
+	"maunium.net/go/mautrix/id"
+
+	"gimhq/chat-bridge/internal/adapter"
+	"gimhq/chat-bridge/internal/model"
+)
+
+// remoteRef is stored per attachment so FetchMedia can download later.
+type remoteRef struct {
+	URL string `json:"url"`
+}
+
+func (acc *account) chatHint(room id.RoomID) *model.Chat {
+	return &model.Chat{ID: room.String(), Kind: acc.kindOf(room)}
+}
+
+func msTime(ts int64) time.Time { return time.UnixMilli(ts).UTC() }
+
+func (acc *account) onMessage(_ context.Context, evt *event.Event) {
+	self := acc.selfID()
+	c := evt.Content.AsMessage()
+	if c == nil {
+		return
+	}
+	at := msTime(evt.Timestamp)
+	rel := c.RelatesTo
+	// Edits arrive as new events that replace an earlier one.
+	if rel != nil && rel.Type == event.RelReplace && c.NewContent != nil {
+		content := convertContent(c.NewContent, evt.Type, evt.ID.String())
+		acc.rep.Events(adapter.Event{Kind: adapter.EvMessageUpdate, ChatID: evt.RoomID.String(), MessageID: rel.EventID.String(), Content: &content, At: at})
+		return
+	}
+	content := convertContent(c, evt.Type, evt.ID.String())
+	m := model.Message{
+		ID: evt.ID.String(), ChatID: evt.RoomID.String(), Sender: model.Sender{ID: evt.Sender.String()},
+		FromMe: evt.Sender == self, Timestamp: at, Content: content,
+	}
+	if rel != nil {
+		if rel.InReplyTo != nil {
+			m.ReplyTo = rel.InReplyTo.EventID.String()
+		}
+		if rel.Type == event.RelThread {
+			m.ThreadID = rel.EventID.String()
+		}
+	}
+	if c.Mentions != nil {
+		for _, u := range c.Mentions.UserIDs {
+			m.Mentions = append(m.Mentions, u.String())
+		}
+	}
+	raw, _ := json.Marshal(evt)
+	// Everything before the first completed /sync is the initial timeline, not live traffic.
+	acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: acc.chatHint(evt.RoomID), Sender: userContact(evt.Sender, ""), Raw: raw, Backfill: !acc.isConnected()})
+}
+
+// convertContent maps m.room.message / m.sticker content.
+func convertContent(c *event.MessageEventContent, typ event.Type, mediaID string) model.Content {
+	if typ == event.EventSticker {
+		return mediaContent(model.ContentSticker, "", mediaID, c)
+	}
+	switch c.MsgType {
+	case event.MsgText, event.MsgNotice, event.MsgEmote:
+		out := model.Content{Type: model.ContentText, Text: c.Body}
+		if c.Format == event.FormatHTML && c.FormattedBody != "" {
+			out.Format, out.Text = "html", c.FormattedBody
+		}
+		return out
+	case event.MsgImage:
+		return mediaContent(model.ContentImage, c.Body, mediaID, c)
+	case event.MsgVideo:
+		return mediaContent(model.ContentVideo, c.Body, mediaID, c)
+	case event.MsgAudio:
+		t := model.ContentAudio
+		if c.MSC3245Voice != nil {
+			t = model.ContentVoice
+		}
+		return mediaContent(t, c.Body, mediaID, c)
+	case event.MsgFile:
+		return mediaContent(model.ContentFile, c.Body, mediaID, c)
+	case event.MsgLocation:
+		loc := &model.Location{Name: c.Body}
+		if coords, ok := strings.CutPrefix(c.GeoURI, "geo:"); ok {
+			parts := strings.Split(strings.SplitN(coords, ";", 2)[0], ",")
+			if len(parts) >= 2 {
+				loc.Lat, _ = strconv.ParseFloat(parts[0], 64)
+				loc.Lon, _ = strconv.ParseFloat(parts[1], 64)
+			}
+		}
+		return model.Content{Type: model.ContentLocation, Text: c.Body, Location: loc}
+	}
+	return model.Content{Type: model.ContentUnsupported, Text: c.Body, Unsupported: &model.Unsupported{PlatformType: string(c.MsgType)}}
+}
+
+func mediaContent(t, caption, mediaID string, c *event.MessageEventContent) model.Content {
+	att := model.Attachment{MediaID: mediaID, State: model.MediaRemote}
+	if c.FileName != "" {
+		att.FileName = c.FileName
+	} else if t == model.ContentFile {
+		att.FileName = c.Body
+	}
+	if c.Info != nil {
+		att.Mime, att.Size, att.Width, att.Height, att.DurationMs = c.Info.MimeType, int64(c.Info.Size), c.Info.Width, c.Info.Height, int64(c.Info.Duration)
+	}
+	if att.Mime == "" {
+		att.Mime = "application/octet-stream"
+	}
+	// Caption is only a caption when a filename is present; otherwise body is the file name.
+	if c.FileName == "" || c.FileName == caption {
+		caption = ""
+	}
+	if c.File != nil {
+		// Encrypted attachments cannot be fetched without E2EE support.
+		att.State = model.MediaFailed
+		return model.Content{Type: t, Text: caption, Attachments: []model.Attachment{att}}
+	}
+	if c.URL != "" {
+		att.RemoteRef, _ = json.Marshal(remoteRef{URL: string(c.URL)})
+	}
+	return model.Content{Type: t, Text: caption, Attachments: []model.Attachment{att}}
+}
+
+func (acc *account) onEncrypted(_ context.Context, evt *event.Event) {
+	m := model.Message{
+		ID: evt.ID.String(), ChatID: evt.RoomID.String(), Sender: model.Sender{ID: evt.Sender.String()}, FromMe: evt.Sender == acc.selfID(),
+		Timestamp: msTime(evt.Timestamp), Content: model.Content{Type: model.ContentUnsupported, Unsupported: &model.Unsupported{PlatformType: "m.room.encrypted"}},
+	}
+	acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: acc.chatHint(evt.RoomID), Sender: userContact(evt.Sender, "")})
+}
+
+func (acc *account) onReaction(_ context.Context, evt *event.Event) {
+	r := evt.Content.AsReaction()
+	if r == nil || r.RelatesTo.Type != event.RelAnnotation {
+		return
+	}
+	acc.mu.Lock()
+	acc.reactions[evt.RoomID.String()+"|"+evt.ID.String()] = r.RelatesTo.EventID // remember for redactions
+	acc.mu.Unlock()
+	acc.rep.Events(adapter.Event{Kind: adapter.EvReaction, ChatID: evt.RoomID.String(), MessageID: r.RelatesTo.EventID.String(),
+		UserID: evt.Sender.String(), Emoji: r.RelatesTo.Key, At: msTime(evt.Timestamp)})
+}
+
+func (acc *account) onRedaction(_ context.Context, evt *event.Event) {
+	acc.mu.Lock()
+	target, wasReaction := acc.reactions[evt.RoomID.String()+"|"+evt.Redacts.String()]
+	delete(acc.reactions, evt.RoomID.String()+"|"+evt.Redacts.String())
+	acc.mu.Unlock()
+	if wasReaction {
+		acc.rep.Events(adapter.Event{Kind: adapter.EvReaction, ChatID: evt.RoomID.String(), MessageID: target.String(), UserID: evt.Sender.String(), Removed: true, At: msTime(evt.Timestamp)})
+		return
+	}
+	acc.rep.Events(adapter.Event{Kind: adapter.EvMessageDelete, ChatID: evt.RoomID.String(), MessageID: evt.Redacts.String(), At: msTime(evt.Timestamp)})
+}
+
+func (acc *account) onMember(_ context.Context, evt *event.Event) {
+	m := evt.Content.AsMember()
+	if m == nil || evt.StateKey == nil {
+		return
+	}
+	user := id.UserID(*evt.StateKey)
+	if m.IsDirect {
+		acc.mu.Lock()
+		acc.roomKind[evt.RoomID] = model.ChatDirect
+		acc.mu.Unlock()
+	}
+	ct := userContact(user, m.Displayname)
+	left := m.Membership == event.MembershipLeave || m.Membership == event.MembershipBan
+	evs := []adapter.Event{
+		{Kind: adapter.EvContact, Contact: ct},
+		{Kind: adapter.EvMember, Member: &adapter.Member{ChatID: evt.RoomID.String(), UserID: user.String(), ChatName: m.Displayname, Left: left}},
+	}
+	if evt.Unsigned.PrevContent != nil {
+		prev := evt.Unsigned.PrevContent.AsMember()
+		kind := ""
+		switch {
+		case prev != nil && prev.Membership == event.MembershipJoin && left:
+			kind = "member_left"
+		case m.Membership == event.MembershipJoin && (prev == nil || prev.Membership != event.MembershipJoin):
+			kind = "member_joined"
+		}
+		if kind != "" {
+			msg := model.Message{ID: evt.ID.String(), ChatID: evt.RoomID.String(), Sender: model.Sender{ID: evt.Sender.String()}, Timestamp: msTime(evt.Timestamp),
+				Content: model.Content{Type: model.ContentSystem, System: &model.System{Kind: kind, Actor: evt.Sender.String(), Targets: []string{user.String()}}}}
+			evs = append(evs, adapter.Event{Kind: adapter.EvMessage, Message: &msg, Chat: acc.chatHint(evt.RoomID)})
+		}
+	}
+	acc.rep.Events(evs...)
+}
+
+func (acc *account) onRoomName(_ context.Context, evt *event.Event) {
+	n := evt.Content.AsRoomName()
+	if n == nil {
+		return
+	}
+	acc.rep.Events(adapter.Event{Kind: adapter.EvChat, Chat: &model.Chat{ID: evt.RoomID.String(), Kind: acc.kindOf(evt.RoomID), Name: n.Name}})
+}
+
+func (acc *account) onTyping(_ context.Context, evt *event.Event) {
+	t := evt.Content.AsTyping()
+	if t == nil {
+		return
+	}
+	var evs []adapter.Event
+	for _, u := range t.UserIDs {
+		if u == acc.selfID() {
+			continue
+		}
+		evs = append(evs, adapter.Event{Kind: adapter.EvTyping, ChatID: evt.RoomID.String(), UserID: u.String(), State: "typing"})
+	}
+	acc.rep.Events(evs...)
+}
+
+func (acc *account) onReceipt(_ context.Context, evt *event.Event) {
+	rc := evt.Content.AsReceipt()
+	if rc == nil {
+		return
+	}
+	var evs []adapter.Event
+	for eventID, byType := range *rc {
+		for _, user := range []map[id.UserID]event.ReadReceipt{byType[event.ReceiptTypeRead]} {
+			for u, r := range user {
+				if u == acc.selfID() {
+					continue
+				}
+				evs = append(evs, adapter.Event{Kind: adapter.EvReceipt, ChatID: evt.RoomID.String(), MessageIDs: []string{eventID.String()},
+					UserID: u.String(), Receipt: "read", At: r.Timestamp.UTC()})
+			}
+		}
+	}
+	acc.rep.Events(evs...)
+}
+
+func (acc *account) onPresence(_ context.Context, evt *event.Event) {
+	p := evt.Content.AsPresence()
+	if p == nil {
+		return
+	}
+	ev := adapter.Event{Kind: adapter.EvPresence, UserID: evt.Sender.String(), State: "online"}
+	if p.Presence != event.PresenceOnline {
+		ev.State = "offline"
+		if p.LastActiveAgo > 0 {
+			ls := time.Now().Add(-time.Duration(p.LastActiveAgo) * time.Millisecond).UTC()
+			ev.LastSeen = &ls
+		}
+	}
+	acc.rep.Events(ev)
+}
+
+func (acc *account) isConnected() bool {
+	acc.mu.Lock()
+	defer acc.mu.Unlock()
+	return acc.connected
+}
+
+func (acc *account) selfID() id.UserID {
+	acc.mu.Lock()
+	defer acc.mu.Unlock()
+	if acc.cli == nil {
+		return ""
+	}
+	return acc.cli.UserID
+}
