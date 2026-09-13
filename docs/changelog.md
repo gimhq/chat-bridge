@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-09-13 22:40 [progress]
+
+Task `20260913-2234-release-workflow`: GitHub release workflow.
+
+- `.github/workflows/release.yml`: on a `v*` tag, web UI gate and Go gate, then pure-Go binaries (`-tags goolm`, no cgo, embedded UI) for linux / darwin / windows × amd64 / arm64 as `.tar.gz` / `.zip` with `checksums.txt` in a GitHub release (prerelease when the tag has `-`); `workflow_dispatch` builds the archives as artifacts only
+- Signal is not in the release binaries (cgo + libsignal); it remains in the container image
+- Vite dev server accepts any host (`allowedHosts: true`) so nsl can publish it under non-`localhost` domains
+- README: Releases section
+
 ## 2026-09-13 20:37 [progress]
 
 Task `20260913-2034-ignore-call-requests`: calls are ignored instead of rejected.

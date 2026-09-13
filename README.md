@@ -35,6 +35,11 @@ stage clones mautrix-signal and runs its `build-rust.sh`); on a developer machin
 then `CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go build -tags goolm,signal ./...`. Without the tag the
 binary stays pure Go and Signal is simply absent from `GET /platforms`.
 
+Prebuilt binaries for Linux, macOS and Windows (amd64, arm64) are attached to each
+[GitHub release](https://github.com/gimhq/chat-bridge/releases). They are pure Go with the web UI
+embedded and without Signal; use the container image for Signal. Pushing a `v*` tag runs
+`.github/workflows/release.yml`, which runs the gates, builds the archives and publishes the release.
+
 First account, WhatsApp via QR:
 
 ```bash

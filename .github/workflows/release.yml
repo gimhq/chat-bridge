@@ -1,0 +1,113 @@
+name: Release
+
+# A `v*` tag builds the binaries and publishes a GitHub release; a manual run builds the same
+# archives as workflow artifacts without releasing.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Web UI gate
+        working-directory: web
+        run: |
+          bun install --frozen-lockfile
+          bun run lint
+          bun run typecheck
+          bun run test
+          bun run build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: webui-dist
+          path: internal/webui/dist
+          include-hidden-files: true
+          if-no-files-found: error
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - name: Go gate
+        run: |
+          test -z "$(gofmt -l .)"
+          go vet -tags goolm ./...
+          go test -tags goolm ./...
+
+  build:
+    needs: [web, go]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v8
+        with:
+          name: webui-dist
+          path: internal/webui/dist
+      # Pure Go (`goolm`, no cgo) so every target cross-compiles; Signal needs cgo + libsignal and
+      # ships in the container image only.
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then version=$GITHUB_REF_NAME; else version=dev-${GITHUB_SHA::7}; fi
+          name=chat-bridge_${version}_${GOOS}_${GOARCH}
+          ext=; [ "$GOOS" = windows ] && ext=.exe
+          mkdir -p "dist/$name"
+          go build -tags goolm -trimpath -ldflags="-s -w -X main.version=$version" -o "dist/$name/chat-bridge$ext" ./cmd/chat-bridge
+          cp LICENSE README.md chat-bridge.example.yaml "dist/$name/"
+          cd dist
+          if [ "$GOOS" = windows ]; then zip -qr "$name.zip" "$name"; else tar -czf "$name.tar.gz" "$name"; fi
+          rm -rf "$name"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: binary-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: binary-*
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum -- * > checksums.txt
+          prerelease=; case "$GITHUB_REF_NAME" in *-*) prerelease=--prerelease ;; esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes $prerelease ./*

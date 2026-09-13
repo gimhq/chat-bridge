@@ -31,7 +31,8 @@ export default defineConfig({
     },
   ],
   resolve: { tsconfigPaths: true },
-  server: { host: '0.0.0.0' },
+  // nsl can publish the dev server under any domain it is configured with, not only *.localhost.
+  server: { host: '0.0.0.0', allowedHosts: true },
   build: { outDir, emptyOutDir: true },
   test: {
     environment: 'jsdom',
