@@ -161,13 +161,36 @@ type ChatPatch struct {
 	Muted    *bool    `json:"muted"`
 	Archived *bool    `json:"archived"`
 	Tags     []string `json:"tags"`
+	Name     *string  `json:"name"`
 }
 
-// PatchChat updates bridge-local flags.
+// PatchChat updates bridge-local flags; a name goes to the platform first (chat.update).
 func (c *Core) PatchChat(ctx context.Context, accountID, chatID string, p ChatPatch) (model.Chat, error) {
+	if p.Name != nil {
+		_, ad, err := c.connected(ctx, accountID)
+		if err != nil {
+			return model.Chat{}, err
+		}
+		up, ok := ad.(adapter.ChatUpdater)
+		if !ok {
+			return model.Chat{}, errUnsupported("chat.update")
+		}
+		if *p.Name == "" {
+			return model.Chat{}, errInvalid("name must not be empty")
+		}
+		if _, err := c.st.GetChat(ctx, accountID, chatID); errors.Is(err, store.ErrNotFound) {
+			return model.Chat{}, errNotFound("chat")
+		}
+		if _, err := up.UpdateChat(ctx, accountID, chatID, adapter.ChatUpdate{Name: p.Name}); err != nil {
+			return model.Chat{}, err
+		}
+	}
 	var out model.Chat
 	err := c.tx(ctx, func(tx *store.Store) error {
 		ch, err := tx.SetChatFlags(ctx, accountID, chatID, p.Muted, p.Archived, p.Tags)
+		if err == nil && p.Name != nil {
+			ch, err = tx.SetChatName(ctx, accountID, chatID, *p.Name)
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			return errNotFound("chat")
 		}
@@ -178,6 +201,38 @@ func (c *Core) PatchChat(ctx context.Context, accountID, chatID string, p ChatPa
 		return emit(ctx, tx, accountID, model.EvChatUpdated, ch)
 	})
 	return out, err
+}
+
+// CreateChat creates a group on the platform (chat.create) and stores it.
+func (c *Core) CreateChat(ctx context.Context, accountID string, req adapter.CreateChatRequest) (model.Chat, error) {
+	_, ad, err := c.connected(ctx, accountID)
+	if err != nil {
+		return model.Chat{}, err
+	}
+	cr, ok := ad.(adapter.ChatCreator)
+	if !ok || !ad.Info().Has(adapter.CapChatCreate) {
+		return model.Chat{}, errUnsupported(adapter.CapChatCreate)
+	}
+	if req.Kind == "" {
+		req.Kind = model.ChatGroup
+	}
+	if req.Kind != model.ChatGroup {
+		return model.Chat{}, errInvalid("only group chats can be created")
+	}
+	if req.Name == "" {
+		return model.Chat{}, errInvalid("name is required")
+	}
+	ch, err := cr.CreateChat(ctx, accountID, req)
+	if err != nil {
+		return model.Chat{}, err
+	}
+	if ch.Kind == "" {
+		ch.Kind = model.ChatGroup
+	}
+	if err := c.storeChatInfo(ctx, accountID, ch, true); err != nil {
+		return model.Chat{}, err
+	}
+	return c.GetChat(ctx, accountID, ch.ID)
 }
 
 // ListContacts pages the address book.
@@ -199,17 +254,42 @@ func (c *Core) GetContact(ctx context.Context, accountID, userID string) (model.
 
 // ContactPatch is the body of PATCH /contacts/{user}.
 type ContactPatch struct {
-	Alias *string `json:"alias"`
+	Alias   *string `json:"alias"`
+	Blocked *bool   `json:"blocked"`
 }
 
-// PatchContact sets the owner alias (bridge-local unless the adapter supports contact.alias).
+// PatchContact sets the owner alias (bridge-local unless the adapter supports contact.alias) and
+// the block state (contact.block, always through the platform).
 func (c *Core) PatchContact(ctx context.Context, accountID, userID string, p ContactPatch) (model.Contact, error) {
-	if p.Alias == nil {
+	if p.Alias == nil && p.Blocked == nil {
 		return c.GetContact(ctx, accountID, userID)
+	}
+	if p.Blocked != nil {
+		_, ad, err := c.connected(ctx, accountID)
+		if err != nil {
+			return model.Contact{}, err
+		}
+		bl, ok := ad.(adapter.Blocker)
+		if !ok {
+			return model.Contact{}, errUnsupported("contact.block")
+		}
+		if _, err := c.st.GetContact(ctx, accountID, userID); errors.Is(err, store.ErrNotFound) {
+			return model.Contact{}, errNotFound("contact")
+		}
+		if err := bl.Block(ctx, accountID, userID, *p.Blocked); err != nil {
+			return model.Contact{}, err
+		}
 	}
 	var out model.Contact
 	err := c.tx(ctx, func(tx *store.Store) error {
-		ct, err := tx.SetLocalAlias(ctx, accountID, userID, *p.Alias)
+		var ct model.Contact
+		var err error
+		if p.Alias != nil {
+			ct, err = tx.SetLocalAlias(ctx, accountID, userID, *p.Alias)
+		}
+		if err == nil && p.Blocked != nil {
+			ct, err = tx.SetBlocked(ctx, accountID, userID, *p.Blocked)
+		}
 		if errors.Is(err, store.ErrNotFound) {
 			return errNotFound("contact")
 		}

@@ -23,7 +23,6 @@ func (acc *account) chatHint(room id.RoomID) *model.Chat {
 func msTime(ts int64) time.Time { return time.UnixMilli(ts).UTC() }
 
 func (acc *account) onMessage(_ context.Context, evt *event.Event) {
-	self := acc.selfID()
 	c := evt.Content.AsMessage()
 	if c == nil {
 		return
@@ -36,10 +35,28 @@ func (acc *account) onMessage(_ context.Context, evt *event.Event) {
 		acc.rep.Events(adapter.Event{Kind: adapter.EvMessageUpdate, ChatID: evt.RoomID.String(), MessageID: rel.EventID.String(), Content: &content, At: at})
 		return
 	}
-	content := convertContent(c, evt.Type, evt.ID.String())
+	m, ok := acc.messageOf(evt)
+	if !ok {
+		return
+	}
+	raw, _ := json.Marshal(evt)
+	// Everything before the first completed /sync is the initial timeline, not live traffic.
+	acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: acc.chatHint(evt.RoomID), Sender: userContact(evt.Sender, ""), Raw: raw, Backfill: !acc.isConnected()})
+}
+
+// messageOf maps a parsed m.room.message / m.sticker event to a message; edits are not messages.
+func (acc *account) messageOf(evt *event.Event) (model.Message, bool) {
+	c := evt.Content.AsMessage()
+	if c == nil {
+		return model.Message{}, false
+	}
+	rel := c.RelatesTo
+	if rel != nil && rel.Type == event.RelReplace {
+		return model.Message{}, false
+	}
 	m := model.Message{
 		ID: evt.ID.String(), ChatID: evt.RoomID.String(), Sender: model.Sender{ID: evt.Sender.String()},
-		FromMe: evt.Sender == self, Timestamp: at, Content: content,
+		FromMe: evt.Sender == acc.selfID(), Timestamp: msTime(evt.Timestamp), Content: convertContent(c, evt.Type, evt.ID.String()),
 	}
 	if rel != nil {
 		if rel.InReplyTo != nil {
@@ -54,9 +71,7 @@ func (acc *account) onMessage(_ context.Context, evt *event.Event) {
 			m.Mentions = append(m.Mentions, u.String())
 		}
 	}
-	raw, _ := json.Marshal(evt)
-	// Everything before the first completed /sync is the initial timeline, not live traffic.
-	acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: acc.chatHint(evt.RoomID), Sender: userContact(evt.Sender, ""), Raw: raw, Backfill: !acc.isConnected()})
+	return m, true
 }
 
 // convertContent maps Matrix content through the shared converter.

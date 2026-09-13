@@ -60,6 +60,7 @@ func (a *Adapter) Info() adapter.Info {
 			adapter.CapSendText, adapter.CapSendMedia, adapter.CapSendLocation, adapter.CapSendContact, adapter.CapReply,
 			adapter.CapEdit, adapter.CapDelete, adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping,
 			adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapPresence, adapter.CapReceipts, adapter.CapMarkdown,
+			adapter.CapChatCreate, adapter.CapHistory, adapter.CapSelfUpdate,
 		},
 		LoginFlows: []model.LoginFlow{
 			{ID: flowPhone, Name: "Phone number + code"},

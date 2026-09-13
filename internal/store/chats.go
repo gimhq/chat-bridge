@@ -78,6 +78,19 @@ func (s *Store) SetChatFlags(ctx context.Context, accountID, chatID string, mute
 	return s.GetChat(ctx, accountID, chatID)
 }
 
+// SetChatName stores a name the platform accepted.
+func (s *Store) SetChatName(ctx context.Context, accountID, chatID, name string) (model.Chat, error) {
+	c, err := s.GetChat(ctx, accountID, chatID)
+	if err != nil {
+		return model.Chat{}, err
+	}
+	c.Name = name
+	if err := s.writeChat(ctx, c); err != nil {
+		return model.Chat{}, err
+	}
+	return s.GetChat(ctx, accountID, chatID)
+}
+
 func (s *Store) writeChat(ctx context.Context, c model.Chat) error {
 	if c.Tags == nil {
 		c.Tags = []string{}

@@ -100,9 +100,17 @@ func (h *handlers) patchAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, acc)
 }
 
-func (h *handlers) patchSelf(w http.ResponseWriter, _ *http.Request) {
-	writeErr(w, &core.Error{Status: http.StatusUnprocessableEntity, Code: "unsupported", Message: "platform lacks self.update",
-		Details: map[string]any{"capability": adapter.CapSelfUpdate}})
+func (h *handlers) patchSelf(w http.ResponseWriter, r *http.Request) {
+	var req core.SelfPatch
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	acc, err := h.core.UpdateSelf(r.Context(), param(r, "account"), req)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, acc)
 }
 
 func (h *handlers) deleteAccount(w http.ResponseWriter, r *http.Request) {
@@ -197,6 +205,33 @@ func (h *handlers) listChats(w http.ResponseWriter, r *http.Request) {
 	writeList(w, "chats", chats, next)
 }
 
+func (h *handlers) createChat(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Kind    string   `json:"kind"`
+		Name    string   `json:"name"`
+		Members []string `json:"members"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	ch, err := h.core.CreateChat(r.Context(), param(r, "account"), adapter.CreateChatRequest{Kind: req.Kind, Name: req.Name, Members: req.Members})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, ch)
+}
+
+func (h *handlers) searchMessages(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	msgs, next, err := h.core.SearchMessages(r.Context(), param(r, "account"), core.SearchQuery{Q: q.Get("q"), ChatID: q.Get("chat"), Cursor: q.Get("cursor"), Limit: parseLimit(r)})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeList(w, "messages", msgs, next)
+}
+
 func (h *handlers) resolveChat(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Handle string `json:"handle"`
@@ -266,7 +301,7 @@ func (h *handlers) typing(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) listMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	mq := core.MessageQuery{Cursor: q.Get("cursor"), Limit: parseLimit(r)}
+	mq := core.MessageQuery{Cursor: q.Get("cursor"), Limit: parseLimit(r), Backfill: q.Get("backfill") == "1" || q.Get("backfill") == "true"}
 	var err error
 	if mq.Before, err = parseTime(q.Get("before")); err != nil {
 		writeErr(w, &core.Error{Status: http.StatusBadRequest, Code: "invalid_request", Message: "before: " + err.Error()})

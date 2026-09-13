@@ -68,6 +68,7 @@ func (a *Adapter) Info() adapter.Info {
 			adapter.CapEdit, adapter.CapDelete, adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping,
 			adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapPresence, adapter.CapReceipts,
 			adapter.CapMarkdown, adapter.CapHTML, adapter.CapKeys,
+			adapter.CapChatCreate, adapter.CapHistory, adapter.CapSelfUpdate,
 		},
 		LoginFlows: []model.LoginFlow{
 			{ID: flowPassword, Name: "Username and password"},

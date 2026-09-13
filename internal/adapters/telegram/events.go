@@ -448,20 +448,7 @@ func (acc *account) loadDialogs(ctx context.Context) {
 	pm := acc.peers
 	acc.mu.Unlock()
 	_ = pm.Apply(ctx, users, chats)
-	ents := tg.Entities{Users: map[int64]*tg.User{}, Chats: map[int64]*tg.Chat{}, Channels: map[int64]*tg.Channel{}}
-	for _, u := range users {
-		if uu, ok := u.(*tg.User); ok {
-			ents.Users[uu.ID] = uu
-		}
-	}
-	for _, c := range chats {
-		switch cc := c.(type) {
-		case *tg.Chat:
-			ents.Chats[cc.ID] = cc
-		case *tg.Channel:
-			ents.Channels[cc.ID] = cc
-		}
-	}
+	ents := entitiesOf(users, chats)
 	var evs []adapter.Event
 	for _, d := range dialogs {
 		dlg, ok := d.(*tg.Dialog)

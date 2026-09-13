@@ -1,8 +1,8 @@
 # 20260913-0530-api-framework-completion Complete the bridge API framework against api.md
 
-- **status**: draft
+- **status**: implementing
 - **createdAt**: 2026-09-13 05:30
-- **approvedAt**: (pending)
+- **approvedAt**: 2026-09-13 05:40
 - **relatedTask**: 20260913-0530-api-framework-completion
 
 ## Context
@@ -132,4 +132,7 @@ Four phases, each ending with the quality gate and a commit so partial delivery 
 
 ## Annotations
 
-(none yet)
+- 2026-09-13 05:40 — user approved Phase A only ("A"); Phases B–D wait for a separate go-ahead.
+- 2026-09-13 06:40 — Phase A delivered and committed (see changelog). Deviation from the plan text:
+  `backfill=1` without `message.history` is ignored rather than rejected, matching api.md §4.4.
+  Platform calls verified by compile and fake-adapter tests only; no live accounts here.

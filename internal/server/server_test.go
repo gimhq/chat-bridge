@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"gimhq/chat-bridge/internal/adapter"
 	"gimhq/chat-bridge/internal/adapter/fake"
@@ -151,7 +152,7 @@ func TestAccountsAndLogin(t *testing.T) {
 		t.Fatalf("account detail: %d %v", rec.Code, out)
 	}
 	rec, out = e.do("PATCH", "/v1/accounts/a1/self", map[string]any{"name": "x"})
-	if rec.Code != 422 || errCode(out) != "unsupported" {
+	if rec.Code != 409 || errCode(out) != "account_not_ready" { // capability present, account still connecting
 		t.Fatalf("self update: %d %v", rec.Code, out)
 	}
 	rec, out = e.do("GET", "/v1/accounts", nil)
@@ -303,5 +304,67 @@ func TestEventsAndWebhooks(t *testing.T) {
 	}
 	if rec, _ := e.do("DELETE", "/v1/webhooks/"+id, nil); rec.Code != 404 {
 		t.Fatalf("delete twice: %d", rec.Code)
+	}
+}
+
+func TestChatCreateSearchSelfAndBlock(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	e.connected("a1")
+
+	rec, out := e.do("POST", "/v1/accounts/a1/chats", map[string]any{"name": "Team", "members": []string{"u1@fake"}})
+	if rec.Code != 201 || out["kind"] != "group" || out["name"] != "Team" {
+		t.Fatalf("create chat: %d %v", rec.Code, out)
+	}
+	chatID := out["id"].(string)
+	rec, out = e.do("POST", "/v1/accounts/a1/chats", map[string]any{"kind": "direct", "name": "x"})
+	if rec.Code != 400 {
+		t.Fatalf("create direct: %d %v", rec.Code, out)
+	}
+	rec, out = e.do("PATCH", "/v1/accounts/a1/chats/"+chatID, map[string]any{"name": "Team 2", "muted": true})
+	if rec.Code != 200 || out["name"] != "Team 2" || out["muted"] != true {
+		t.Fatalf("rename: %d %v", rec.Code, out)
+	}
+
+	// Search over stored text; backfill query is accepted and served by the fake's history.
+	_ = e.fake.Push(ctx, "a1", adapter.Event{Kind: adapter.EvMessage, Message: &model.Message{ID: "m1", ChatID: "u1@fake", Sender: model.Sender{ID: "u1@fake"},
+		Timestamp: time.Now().UTC(), Content: model.Content{Type: model.ContentText, Text: "quarterly numbers"}}})
+	rec, out = e.do("GET", "/v1/accounts/a1/messages/search?q=quarterly", nil)
+	if rec.Code != 200 || len(out["messages"].([]any)) != 1 {
+		t.Fatalf("search: %d %v", rec.Code, out)
+	}
+	if rec, _ = e.do("GET", "/v1/accounts/a1/messages/search", nil); rec.Code != 400 {
+		t.Fatalf("search without q: %d", rec.Code)
+	}
+	e.fake.History = map[string][]model.Message{"u1@fake": {{ID: "h1", ChatID: "u1@fake", Sender: model.Sender{ID: "u1@fake"},
+		Timestamp: time.Now().UTC().Add(-time.Hour), Content: model.Content{Type: model.ContentText, Text: "old"}}}}
+	rec, out = e.do("GET", "/v1/accounts/a1/chats/u1%40fake/messages?limit=5&backfill=1", nil)
+	if rec.Code != 200 || len(out["messages"].([]any)) != 2 {
+		t.Fatalf("backfill: %d %v", rec.Code, out)
+	}
+
+	// Self update with an uploaded avatar.
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	fw, _ := mw.CreateFormFile("file", "me.png")
+	_, _ = fw.Write([]byte("PNG"))
+	_ = mw.Close()
+	rec, out = e.do("POST", "/v1/accounts/a1/media", &buf, mw.FormDataContentType())
+	if rec.Code != 201 {
+		t.Fatalf("upload: %d %v", rec.Code, out)
+	}
+	rec, out = e.do("PATCH", "/v1/accounts/a1/self", map[string]any{"name": "New Me", "avatar_media_id": out["media_id"]})
+	self, _ := out["self"].(map[string]any)
+	if rec.Code != 200 || self == nil || self["name"] != "New Me" || self["avatar"] == nil {
+		t.Fatalf("self: %d %v", rec.Code, out)
+	}
+	if rec, _ = e.do("PATCH", "/v1/accounts/a1/self", map[string]any{}); rec.Code != 400 {
+		t.Fatalf("empty self patch: %d", rec.Code)
+	}
+
+	// Block through the platform.
+	rec, out = e.do("PATCH", "/v1/accounts/a1/contacts/u1%40fake", map[string]any{"blocked": true})
+	if rec.Code != 200 || out["blocked"] != true || len(e.fake.Blocked) != 1 {
+		t.Fatalf("block: %d %v", rec.Code, out)
 	}
 }

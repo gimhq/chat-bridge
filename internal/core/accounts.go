@@ -424,3 +424,52 @@ func hasFlow(ad adapter.Adapter, flow string) bool {
 	}
 	return false
 }
+
+// SelfPatch is the body of PATCH /accounts/{a}/self.
+type SelfPatch struct {
+	Name          *string `json:"name"`
+	Bio           *string `json:"bio"`
+	AvatarMediaID string  `json:"avatar_media_id"`
+}
+
+// UpdateSelf changes the account's profile on the platform (self.update) and refreshes Account.self.
+func (c *Core) UpdateSelf(ctx context.Context, accountID string, p SelfPatch) (model.Account, error) {
+	_, ad, err := c.connected(ctx, accountID)
+	if err != nil {
+		return model.Account{}, err
+	}
+	su, ok := ad.(adapter.SelfUpdater)
+	if !ok || !ad.Info().Has(adapter.CapSelfUpdate) {
+		return model.Account{}, errUnsupported(adapter.CapSelfUpdate)
+	}
+	if p.Name == nil && p.Bio == nil && p.AvatarMediaID == "" {
+		return model.Account{}, errInvalid("nothing to update")
+	}
+	if p.AvatarMediaID != "" {
+		md, err := c.st.GetMedia(ctx, p.AvatarMediaID)
+		if errors.Is(err, store.ErrNotFound) {
+			return model.Account{}, errNotFound("media " + p.AvatarMediaID)
+		}
+		if err != nil {
+			return model.Account{}, err
+		}
+		if md.State != model.MediaReady {
+			return model.Account{}, errInvalid("media %s is %s", md.ID, md.State)
+		}
+	}
+	self, err := su.UpdateSelf(ctx, accountID, adapter.SelfUpdate{Name: p.Name, Bio: p.Bio, AvatarMediaID: p.AvatarMediaID, Media: &mediaSource{c: c}})
+	if err != nil {
+		return model.Account{}, err
+	}
+	self.IsSelf, self.IsContact = true, true
+	err = c.tx(ctx, func(tx *store.Store) error {
+		if _, err := tx.UpsertContact(ctx, accountID, self); err != nil {
+			return err
+		}
+		return c.emitAccountStatus(ctx, tx, accountID)
+	})
+	if err != nil {
+		return model.Account{}, err
+	}
+	return c.GetAccount(ctx, accountID)
+}

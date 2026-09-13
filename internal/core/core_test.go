@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -158,6 +159,9 @@ func TestIngestSendAndMedia(t *testing.T) {
 	c, f := newCore(t)
 	ctx := context.Background()
 	connected(t, c, f, "a1")
+	// The address book sync runs in the background on connect; wait for it so the alias it
+	// brings ("Alice W") is what the sender-name snapshot resolves to.
+	eventually(t, func() bool { cs, _, _ := c.ListContacts(ctx, "a1", "", "", 10); return len(cs) >= 2 })
 
 	// Inbound text with hints creates chat, contact, and message.new.
 	if err := f.Push(ctx, "a1", inbound("m1", "u1@fake", "u1@fake", "hi")); err != nil {
@@ -171,7 +175,7 @@ func TestIngestSendAndMedia(t *testing.T) {
 		t.Fatalf("chats: %+v %v", chats, err)
 	}
 	m, err := c.GetMessage(ctx, "a1", "m1", true)
-	if err != nil || m.Content.Text != "hi" || m.Sender.Name != "alice" || string(m.Raw) != `{"raw":true}` {
+	if err != nil || m.Content.Text != "hi" || m.Sender.Name != "Alice W" || string(m.Raw) != `{"raw":true}` {
 		t.Fatalf("message: %+v %v", m, err)
 	}
 
@@ -559,4 +563,144 @@ func TestKeyManagement(t *testing.T) {
 	if err != nil || n != 2 {
 		t.Fatalf("import: %d %v", n, err)
 	}
+}
+
+func TestChatCreateRenameSelfAndBlock(t *testing.T) {
+	c, f := newCore(t)
+	ctx := context.Background()
+	connected(t, c, f, "a1")
+
+	// chat.create goes to the adapter, is stored with members, and emits chat.new.
+	ch, err := c.CreateChat(ctx, "a1", adapter.CreateChatRequest{Kind: model.ChatGroup, Name: "Team", Members: []string{"u1@fake", "u2@fake"}})
+	if err != nil || ch.Kind != model.ChatGroup || ch.Name != "Team" || ch.AccountID != "a1" || len(f.Created) != 1 {
+		t.Fatalf("create chat: %+v %v", ch, err)
+	}
+	got, err := c.GetChat(ctx, "a1", ch.ID)
+	if err != nil || got.Name != "Team" || len(got.Participants) != 2 {
+		t.Fatalf("stored chat: %+v %v", got, err)
+	}
+	if _, err := c.CreateChat(ctx, "a1", adapter.CreateChatRequest{Kind: model.ChatDirect, Name: "x"}); err == nil {
+		t.Fatal("direct chats cannot be created")
+	}
+	if _, err := c.CreateChat(ctx, "a1", adapter.CreateChatRequest{Kind: model.ChatGroup, Members: []string{"u1@fake"}}); err == nil {
+		t.Fatal("name is required")
+	}
+
+	// A name in PATCH reaches the platform; the store and chat.updated follow.
+	name := "Team 2"
+	got, err = c.PatchChat(ctx, "a1", ch.ID, ChatPatch{Name: &name})
+	if err != nil || got.Name != "Team 2" || len(f.Renamed) != 1 || f.Renamed[0] != ch.ID+"=Team 2" {
+		t.Fatalf("rename: %+v %v %v", got, err, f.Renamed)
+	}
+	evs, _, _ := c.ListEvents(ctx, "", store.EventFilter{Types: []string{model.EvChatNew, model.EvChatUpdated}}, 100)
+	var kinds []string
+	for _, e := range evs {
+		kinds = append(kinds, e.Type)
+	}
+	if len(kinds) < 2 || kinds[0] != model.EvChatNew || kinds[len(kinds)-1] != model.EvChatUpdated {
+		t.Fatalf("chat events: %v", kinds)
+	}
+
+	// self.update: name, bio and an uploaded avatar; Account.self reflects it.
+	att, err := c.Upload(ctx, "a1", strings.NewReader("PNG"), adapter.MediaMeta{Mime: "image/png", FileName: "me.png"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bio := "hello"
+	acc, err := c.UpdateSelf(ctx, "a1", SelfPatch{Name: &name, Bio: &bio, AvatarMediaID: att.MediaID})
+	if err != nil || acc.Self == nil || acc.Self.Names.Profile != "Team 2" || acc.Self.Bio != "hello" || acc.Self.Avatar == nil || len(f.SelfUpdates) != 1 {
+		t.Fatalf("update self: %+v %v", acc, err)
+	}
+	if _, err := c.UpdateSelf(ctx, "a1", SelfPatch{AvatarMediaID: "nope"}); err == nil {
+		t.Fatal("unknown avatar media must fail")
+	}
+
+	// Blocking reaches the platform and flips the stored contact.
+	if err := f.Push(ctx, "a1", inbound("m1", "u1@fake", "u1@fake", "hi")); err != nil {
+		t.Fatal(err)
+	}
+	yes := true
+	ct, err := c.PatchContact(ctx, "a1", "u1@fake", ContactPatch{Blocked: &yes})
+	if err != nil || !ct.Blocked || len(f.Blocked) != 1 || f.Blocked[0] != "u1@fake:true" {
+		t.Fatalf("block: %+v %v %v", ct, err, f.Blocked)
+	}
+	no := false
+	if ct, err = c.PatchContact(ctx, "a1", "u1@fake", ContactPatch{Blocked: &no}); err != nil || ct.Blocked {
+		t.Fatalf("unblock: %+v %v", ct, err)
+	}
+}
+
+func TestBackfillFromPlatformAndSearch(t *testing.T) {
+	c, f := newCore(t)
+	ctx := context.Background()
+	connected(t, c, f, "a1")
+	base := time.Now().UTC().Add(-time.Hour)
+	f.History = map[string][]model.Message{"u1@fake": {}}
+	for i := 5; i >= 1; i-- { // newest first, as a platform returns them
+		f.History["u1@fake"] = append(f.History["u1@fake"], model.Message{ID: fmt.Sprintf("h%d", i), ChatID: "u1@fake", Sender: model.Sender{ID: "u1@fake"},
+			Timestamp: base.Add(time.Duration(i) * time.Minute), Content: model.Content{Type: model.ContentText, Text: fmt.Sprintf("history number %d", i)}})
+	}
+	if err := f.Push(ctx, "a1", inbound("m1", "u1@fake", "u1@fake", "latest 你好世界")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without backfill the store answers alone.
+	msgs, _, err := c.ListMessages(ctx, "a1", "u1@fake", MessageQuery{Limit: 3})
+	if err != nil || len(msgs) != 1 {
+		t.Fatalf("local only: %d %v", len(msgs), err)
+	}
+	// With backfill the short page is topped up from the platform; the rows are stored as history.
+	msgs, next, err := c.ListMessages(ctx, "a1", "u1@fake", MessageQuery{Limit: 3, Backfill: true})
+	if err != nil || len(msgs) != 3 || msgs[0].ID != "m1" || msgs[1].ID != "h5" || msgs[2].ID != "h4" || next == "" {
+		t.Fatalf("backfilled page: %v %q %v", ids(msgs), next, err)
+	}
+	if len(f.Backfilled) != 1 || f.Backfilled[0] != "u1@fake<m1" {
+		t.Fatalf("adapter asked: %v", f.Backfilled)
+	}
+	chats, _, _ := c.ListChats(ctx, "a1", store.ChatFilter{}, "", 10)
+	if chats[0].UnreadCount != 1 {
+		t.Fatalf("history must not count unread: %d", chats[0].UnreadCount)
+	}
+	// Next page continues from the oldest stored row.
+	msgs, _, err = c.ListMessages(ctx, "a1", "u1@fake", MessageQuery{Limit: 3, Cursor: next, Backfill: true})
+	if err != nil || len(msgs) != 3 || msgs[0].ID != "h3" || msgs[2].ID != "h1" {
+		t.Fatalf("second page: %v %v", ids(msgs), err)
+	}
+	// A chat the platform has no history for stays empty without error.
+	if msgs, _, err := c.ListMessages(ctx, "a1", "empty@fake", MessageQuery{Limit: 3, Backfill: true}); err != nil || len(msgs) != 0 {
+		t.Fatalf("no history: %v %v", ids(msgs), err)
+	}
+
+	// Search: local FTS over stored text, chat filter, CJK substrings, paging.
+	res, _, err := c.SearchMessages(ctx, "a1", SearchQuery{Q: "history", Limit: 10})
+	if err != nil || len(res) != 5 || res[0].ID != "h5" {
+		t.Fatalf("search: %v %v", ids(res), err)
+	}
+	res, _, _ = c.SearchMessages(ctx, "a1", SearchQuery{Q: "number 3", Limit: 10})
+	if len(res) != 1 || res[0].ID != "h3" {
+		t.Fatalf("search phrase: %v", ids(res))
+	}
+	res, _, _ = c.SearchMessages(ctx, "a1", SearchQuery{Q: "好世", Limit: 10})
+	if len(res) != 1 || res[0].ID != "m1" {
+		t.Fatalf("search cjk: %v", ids(res))
+	}
+	res, next, _ = c.SearchMessages(ctx, "a1", SearchQuery{Q: "history", ChatID: "u1@fake", Limit: 2})
+	if len(res) != 2 || next == "" {
+		t.Fatalf("search page: %v %q", ids(res), next)
+	}
+	res, _, _ = c.SearchMessages(ctx, "a1", SearchQuery{Q: "history", ChatID: "u1@fake", Limit: 2, Cursor: next})
+	if len(res) != 2 || res[0].ID != "h3" {
+		t.Fatalf("search page 2: %v", ids(res))
+	}
+	if _, _, err := c.SearchMessages(ctx, "a1", SearchQuery{Limit: 2}); err == nil {
+		t.Fatal("q is required")
+	}
+}
+
+func ids(ms []model.Message) []string {
+	out := make([]string, len(ms))
+	for i, m := range ms {
+		out[i] = m.ID
+	}
+	return out
 }

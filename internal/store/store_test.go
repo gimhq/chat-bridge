@@ -265,3 +265,77 @@ func TestEventsAndWebhooks(t *testing.T) {
 		t.Fatalf("webhook state: %+v", ws[0])
 	}
 }
+
+func TestSearchRenameAndBlock(t *testing.T) {
+	s := openTest(t)
+	ctx := context.Background()
+	if err := s.CreateAccount(ctx, "a1", "fake", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertChat(ctx, model.Chat{AccountID: "a1", ID: "c1", Kind: model.ChatGroup, Name: "Old"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpsertChat(ctx, model.Chat{AccountID: "a1", ID: "c2", Kind: model.ChatDirect}); err != nil {
+		t.Fatal(err)
+	}
+	texts := map[string]string{"m1": "meeting tomorrow at ten", "m2": "早上开会 好的", "m3": "tomorrow again", "m4": "unrelated"}
+	chats := map[string]string{"m1": "c1", "m2": "c1", "m3": "c2", "m4": "c2"}
+	for i, id := range []string{"m1", "m2", "m3", "m4"} {
+		m := msg(id, int64(1000+i), texts[id])
+		m.AccountID, m.ChatID = "a1", chats[id]
+		if _, _, err := s.InsertMessage(ctx, m, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, next, err := s.SearchMessages(ctx, "a1", "", "tomorrow", "", 10)
+	if err != nil || len(got) != 2 || got[0].ID != "m3" || got[1].ID != "m1" || next != "" {
+		t.Fatalf("search: %v %v", got, err)
+	}
+	got, _, _ = s.SearchMessages(ctx, "a1", "c1", "tomorrow", "", 10)
+	if len(got) != 1 || got[0].ID != "m1" {
+		t.Fatalf("search in chat: %v", got)
+	}
+	got, _, _ = s.SearchMessages(ctx, "a1", "", "开会", "", 10) // two characters: LIKE path
+	if len(got) != 1 || got[0].ID != "m2" {
+		t.Fatalf("search cjk short: %v", got)
+	}
+	got, _, _ = s.SearchMessages(ctx, "a1", "", "上开会", "", 10) // three characters: trigram path
+	if len(got) != 1 || got[0].ID != "m2" {
+		t.Fatalf("search cjk trigram: %v", got)
+	}
+	got, _, _ = s.SearchMessages(ctx, "a1", "", "tomorrow ten", "", 10)
+	if len(got) != 1 || got[0].ID != "m1" {
+		t.Fatalf("search all terms: %v", got)
+	}
+	got, next, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", "", 1)
+	if len(got) != 1 || next == "" {
+		t.Fatalf("search page 1: %v %q", got, next)
+	}
+	got, next, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", next, 1)
+	if len(got) != 1 || got[0].ID != "m1" || next != "" {
+		t.Fatalf("search page 2: %v %q", got, next)
+	}
+	if _, _, err := s.SearchMessages(ctx, "a1", "", "  ", "", 1); err == nil {
+		t.Fatal("empty query must fail")
+	}
+	// Edits keep the index in step.
+	st, _ := s.GetMessage(ctx, "a1", "c2", "m4")
+	if _, err := s.UpdateMessage(ctx, st.Seq(), func(m *model.Message) { m.Content.Text = "now about tomorrow" }); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", "", 10); len(got) != 3 {
+		t.Fatalf("after edit: %v", got)
+	}
+
+	ch, err := s.SetChatName(ctx, "a1", "c1", "New")
+	if err != nil || ch.Name != "New" {
+		t.Fatalf("rename: %+v %v", ch, err)
+	}
+	if _, err := s.UpsertContact(ctx, "a1", model.Contact{ID: "u1"}); err != nil {
+		t.Fatal(err)
+	}
+	ct, err := s.SetBlocked(ctx, "a1", "u1", true)
+	if err != nil || !ct.Blocked {
+		t.Fatalf("block: %+v %v", ct, err)
+	}
+}

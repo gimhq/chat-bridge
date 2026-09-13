@@ -147,8 +147,10 @@ CREATE INDEX messages_timeline ON messages(account_id, chat_id, ts DESC, seq DES
 CREATE UNIQUE INDEX messages_client_id ON messages(account_id, chat_id, client_id) WHERE client_id IS NOT NULL;
 CREATE INDEX messages_ephemeral ON messages(json_extract(ephemeral,'$.expires_at')) WHERE ephemeral IS NOT NULL;
 
-CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='seq', tokenize='unicode61');
--- plus the three standard external-content triggers (insert/delete/update) on messages.text
+CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='seq', tokenize='trigram');
+-- plus the three standard external-content triggers (insert/delete/update) on messages.text.
+-- trigram (not unicode61) so CJK text, which has no word boundaries, is searchable by substring;
+-- search terms shorter than three characters fall back to LIKE.
 
 CREATE TABLE message_versions (              -- previous bodies after an edit
   message_seq INTEGER NOT NULL REFERENCES messages(seq) ON DELETE CASCADE,
@@ -360,6 +362,12 @@ Webhook delivery reads `events` by `cursor`; a webhook paused for longer than
 `schema_version` holds one integer. Migrations are numbered SQL files embedded in the binary,
 applied in order inside a transaction at startup; the process refuses to start on a database newer
 than it knows. No down migrations. Adapter-private databases are versioned by their own libraries.
+
+| Version | Change |
+|---|---|
+| 1 | initial schema |
+| 2 | `accounts.adapter` (instance binding) |
+| 3 | `messages_fts` (trigram FTS5, external content) with its triggers, rebuilt over existing rows |
 
 ## 9. Sizing
 

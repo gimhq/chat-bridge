@@ -51,6 +51,7 @@ func (a *Adapter) Info() adapter.Info {
 			adapter.CapReply, adapter.CapEdit, adapter.CapDelete, adapter.CapReaction,
 			adapter.CapChatRead, adapter.CapChatTyping, adapter.CapChatResolve, adapter.CapChatMembers,
 			adapter.CapPresence, adapter.CapReceipts, adapter.CapMarkdown,
+			adapter.CapChatCreate, adapter.CapSelfUpdate,
 		},
 		LoginFlows: []model.LoginFlow{
 			{ID: loginFlowQR, Name: "Scan QR from WhatsApp > Linked devices"},

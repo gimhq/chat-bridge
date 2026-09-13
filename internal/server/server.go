@@ -80,6 +80,7 @@ func New(opts Options) http.Handler {
 			r.Delete("/login", h.loginCancel)
 
 			r.Get("/chats", h.listChats)
+			r.Post("/chats", h.createChat)
 			r.Post("/chats/resolve", h.resolveChat)
 			r.Get("/chats/{chat}", h.getChat)
 			r.Patch("/chats/{chat}", h.patchChat)
@@ -88,6 +89,7 @@ func New(opts Options) http.Handler {
 			r.Get("/chats/{chat}/messages", h.listMessages)
 			r.Post("/chats/{chat}/messages", h.sendMessage)
 
+			r.Get("/messages/search", h.searchMessages)
 			r.Get("/messages/{msg}", h.getMessage)
 			r.Patch("/messages/{msg}", h.editMessage)
 			r.Delete("/messages/{msg}", h.deleteMessage)

@@ -33,6 +33,14 @@ type Adapter struct {
 	Deleted  []string
 	Read     []string
 	FailSend error
+
+	// Phase A recordings and canned history (chat id → messages newest first).
+	Created     []model.Chat
+	Renamed     []string
+	Backfilled  []string
+	SelfUpdates []adapter.SelfUpdate
+	Blocked     []string
+	History     map[string][]model.Message
 }
 
 // New returns an adapter with no accounts.
@@ -43,7 +51,8 @@ func New() *Adapter {
 // Info declares a broad capability set.
 func (a *Adapter) Info() adapter.Info {
 	caps := []string{adapter.CapSendText, adapter.CapSendMedia, adapter.CapReply, adapter.CapEdit, adapter.CapDelete,
-		adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping, adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapReceipts}
+		adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping, adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapReceipts,
+		adapter.CapChatCreate, adapter.CapHistory, adapter.CapSelfUpdate}
 	if a.Keys {
 		caps = append(caps, adapter.CapKeys)
 	}
@@ -218,3 +227,79 @@ func (a *Adapter) KeysExport(_ context.Context, _, passphrase string) ([]byte, e
 }
 
 func (a *Adapter) KeysImport(_ context.Context, _, _ string, _ []byte) (int, error) { return 2, nil }
+
+// --- Phase A optional interfaces ---
+
+func (a *Adapter) CreateChat(_ context.Context, _ string, req adapter.CreateChatRequest) (model.Chat, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if req.Name == "" {
+		return model.Chat{}, adapter.Errorf(adapter.ErrInvalidInput, "name is required")
+	}
+	a.nextID++
+	ch := model.Chat{ID: fmt.Sprintf("g%d@fake", a.nextID), Kind: model.ChatGroup, Name: req.Name}
+	for _, m := range req.Members {
+		ch.Participants = append(ch.Participants, model.Participant{ID: m, Role: "member"})
+	}
+	a.Created = append(a.Created, ch)
+	return ch, nil
+}
+
+func (a *Adapter) UpdateChat(_ context.Context, _, chatID string, p adapter.ChatUpdate) (model.Chat, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	ch := model.Chat{ID: chatID, Kind: model.ChatGroup}
+	if p.Name != nil {
+		ch.Name = *p.Name
+		a.Renamed = append(a.Renamed, chatID+"="+*p.Name)
+	}
+	return ch, nil
+}
+
+// Backfill serves History[chatID] older than before, newest first.
+func (a *Adapter) Backfill(_ context.Context, _, chatID string, before adapter.BackfillCursor, limit int) ([]model.Message, bool, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.Backfilled = append(a.Backfilled, chatID+"<"+before.MessageID)
+	var out []model.Message
+	for _, m := range a.History[chatID] {
+		if !before.Timestamp.IsZero() && !m.Timestamp.Before(before.Timestamp) {
+			continue
+		}
+		if len(out) == limit {
+			return out, true, nil
+		}
+		out = append(out, m)
+	}
+	return out, false, nil
+}
+
+func (a *Adapter) UpdateSelf(ctx context.Context, accountID string, p adapter.SelfUpdate) (model.Contact, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	self := *Self(accountID)
+	if p.Name != nil {
+		self.Names.Profile = *p.Name
+	}
+	if p.Bio != nil {
+		self.Bio = *p.Bio
+	}
+	if p.AvatarMediaID != "" {
+		rc, _, err := p.Media.Open(ctx, p.AvatarMediaID)
+		if err != nil {
+			return model.Contact{}, err
+		}
+		_, _ = io.ReadAll(rc)
+		_ = rc.Close()
+		self.Avatar = &model.AvatarRef{MediaID: p.AvatarMediaID}
+	}
+	a.SelfUpdates = append(a.SelfUpdates, p)
+	return self, nil
+}
+
+func (a *Adapter) Block(_ context.Context, _, userID string, blocked bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.Blocked = append(a.Blocked, fmt.Sprintf("%s:%t", userID, blocked))
+	return nil
+}

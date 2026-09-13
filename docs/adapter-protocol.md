@@ -141,18 +141,18 @@ All take `{"account_id": "…", ...}`. Errors use JSON-RPC `error.code`:
 | `login.refresh` | `{account_id}` | LoginStep — current step, new QR if rotated | |
 | `login.cancel` | `{account_id}` | `{}` | |
 | `logout` | `{account_id}` | `{}` | |
-| `self.update` | `{account_id, name?, bio?, avatar_media_id?}` | Contact | `self.update` |
+| `self.update` | `{account_id, name?, bio?, avatar_media_id?, avatar_url?}` | Contact (the new self) | `self.update` |
 | `chat.resolve` | `{account_id, handle}` | `{chat_id, kind, user_id?}` | `chat.resolve` |
 | `chat.get` | `{account_id, chat_id}` | Chat with `participants` | |
 | `chat.create` | `{account_id, kind, name, members}` | Chat | `chat.create` |
-| `chat.update` | `{account_id, chat_id, muted?, archived?, name?}` | Chat | |
+| `chat.update` | `{account_id, chat_id, name?}` | Chat — only fields that reach the platform; mute/archive/tags are bridge-local | |
 | `chat.mark_read` | `{account_id, chat_id, up_to?}` | `{}` | `chat.read` |
 | `chat.typing` | `{account_id, chat_id, state}` | `{}` | `chat.typing` |
-| `chat.backfill` | `{account_id, chat_id, before: {ts, message_id}, limit}` | `{messages: [Message], more: bool}` | `message.history` |
+| `chat.backfill` | `{account_id, chat_id, before?: {ts, message_id}, limit}` | `{messages: [Message], more: bool}` — newest first, strictly older than `before` (absent = from the newest) | `message.history` |
 | `contact.get` | `{account_id, user_id}` | Contact | |
 | `contact.list` | `{account_id}` | `{contacts: [Contact]}` — full address book, used at first connect and on demand | |
 | `contact.set_alias` | `{account_id, user_id, alias}` | Contact | `contact.alias` |
-| `contact.block` | `{account_id, user_id, blocked}` | Contact | |
+| `contact.block` | `{account_id, user_id, blocked}` | `{}` | |
 | `message.send` | `{account_id, chat_id, client_id, content, reply_to?, thread_id?, mentions?}` | Message (`id` set, `status: sent` or `pending`) | `send.*` |
 | `message.edit` | `{account_id, chat_id, message_id, content}` | Message | `message.edit` |
 | `message.delete` | `{account_id, chat_id, message_id}` | `{}` | `message.delete` |
@@ -316,20 +316,26 @@ type Adapter interface {
     LoginCancel(ctx context.Context, id string) error
     Logout(ctx context.Context, id string) error
 
-    ResolveChat(ctx context.Context, id, handle string) (ResolvedChat, error)
     GetChat(ctx context.Context, id, chatID string) (Chat, error)
-    Backfill(ctx context.Context, id, chatID string, before Cursor, limit int) ([]Message, bool, error)
     ListContacts(ctx context.Context, id string) ([]Contact, error)
 
     SendMessage(ctx context.Context, id string, req SendRequest) (Message, error)
-    EditMessage(ctx context.Context, id, chatID, msgID string, c Content) (Message, error)
-    DeleteMessage(ctx context.Context, id, chatID, msgID string) error
-    React(ctx context.Context, id, chatID, msgID, emoji string, remove bool) error
-    MarkRead(ctx context.Context, id, chatID, upTo string) error
-    Typing(ctx context.Context, id, chatID string, state string) error
     FetchMedia(ctx context.Context, id string, mediaID string, ref json.RawMessage, w io.Writer) (MediaInfo, error)
-    AnswerRequest(ctx context.Context, id string, ref json.RawMessage, action string, opts AnswerOpts) error
 }
+
+// Optional, type-asserted by the core (capability in brackets):
+//   Resolver    ResolveChat(ctx, id, handle) (ResolvedChat, error)                       [chat.resolve]
+//   Editor      EditMessage(ctx, id, chatID, msgID, Content) (Message, error)           [message.edit]
+//   Deleter     DeleteMessage(ctx, id, chatID, msgID, senderID) error                   [message.delete]
+//   Reactor     React(ctx, id, chatID, msgID, senderID, emoji, remove) error            [message.reaction]
+//   Reader      MarkRead(ctx, id, chatID, messageIDs, senderID) error                   [chat.read]
+//   Typer       Typing(ctx, id, chatID, state) error                                    [chat.typing]
+//   ChatCreator CreateChat(ctx, id, CreateChatRequest) (Chat, error)                    [chat.create]
+//   ChatUpdater UpdateChat(ctx, id, chatID, ChatUpdate{Name}) (Chat, error)             (none)
+//   Backfiller  Backfill(ctx, id, chatID, BackfillCursor, limit) ([]Message, more, error) [message.history]
+//   SelfUpdater UpdateSelf(ctx, id, SelfUpdate{Name, Bio, AvatarMediaID, Media}) (Contact, error) [self.update]
+//   Blocker     Block(ctx, id, userID, blocked) error                                   (none)
+//   KeyManager  KeysStatus / KeysVerify / KeysExport / KeysImport                        [keys.manage]
 
 // Sink is what the core hands the adapter; every method is durable when it returns.
 type Sink interface {
@@ -340,9 +346,9 @@ type Sink interface {
 }
 ```
 
-Optional capabilities are separate interfaces the core type-asserts (`Editor`, `Reactor`,
-`Resolver`, `Backfiller`, `SelfUpdater`, `AliasSetter`, `RequestAnswerer`, `ChatCreator`, `KeyManager`);
-`Info().Capabilities` must agree with what is implemented, and the core checks at startup.
+Optional capabilities are separate interfaces the core type-asserts (listed above);
+`Info().Capabilities` must agree with what is implemented. Interfaces without a capability
+(`ChatUpdater`, `Blocker`) are used whenever present and answer `422 unsupported` otherwise.
 
 The remote-adapter shim implements `Adapter` by forwarding to JSON-RPC and implements `Sink`
 handling on the receiving side; it is the only place the wire format exists in the core.

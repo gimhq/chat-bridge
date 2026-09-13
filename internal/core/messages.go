@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	"gimhq/chat-bridge/internal/adapter"
@@ -17,6 +18,8 @@ type MessageQuery struct {
 	Before time.Time
 	After  time.Time
 	Limit  int
+	// Backfill tops a short page up from the platform's history (message.history) before answering.
+	Backfill bool
 }
 
 // ListMessages pages a chat.
@@ -25,6 +28,92 @@ func (c *Core) ListMessages(ctx context.Context, accountID, chatID string, q Mes
 		return nil, "", errNotFound("account")
 	}
 	rows, next, err := c.st.ListMessages(ctx, accountID, chatID, q.Cursor, q.Before, q.After, q.Limit)
+	if err != nil {
+		if q.Cursor != "" && err.Error() == "bad cursor" {
+			return nil, "", errInvalid("bad cursor")
+		}
+		return nil, "", err
+	}
+	if q.Backfill && len(rows) < q.Limit {
+		fetched, more, err := c.backfill(ctx, accountID, chatID, q, rows)
+		if err != nil {
+			return nil, "", err
+		}
+		if fetched {
+			if rows, next, err = c.st.ListMessages(ctx, accountID, chatID, q.Cursor, q.Before, q.After, q.Limit); err != nil {
+				return nil, "", err
+			}
+		}
+		if next == "" && more && len(rows) > 0 { // the platform has older history: let the consumer keep paging
+			oldest := rows[len(rows)-1]
+			next = store.EncodeMessageCursor(oldest.Timestamp.Unix(), oldest.Seq())
+		}
+	}
+	out := make([]model.Message, len(rows))
+	for i := range rows {
+		out[i] = rows[i].Message
+	}
+	return out, next, nil
+}
+
+// backfill asks the adapter for history older than the page's oldest row (or the cursor) and
+// stores it as replayed history. It reports whether anything was stored and whether the platform
+// holds still older messages.
+func (c *Core) backfill(ctx context.Context, accountID, chatID string, q MessageQuery, page []store.Stored) (bool, bool, error) {
+	_, ad, err := c.connected(ctx, accountID)
+	if err != nil {
+		return false, false, err
+	}
+	bf, ok := ad.(adapter.Backfiller)
+	if !ok || !ad.Info().Has(adapter.CapHistory) {
+		return false, false, nil // api.md §4.4: ignored when the platform has no history
+	}
+	var before adapter.BackfillCursor
+	switch {
+	case len(page) > 0:
+		oldest := page[len(page)-1]
+		before = adapter.BackfillCursor{Timestamp: oldest.Timestamp, MessageID: oldest.ID}
+	case q.Cursor != "":
+		_, seq, _ := store.DecodeMessageCursor(q.Cursor)
+		if last, err := c.st.GetMessageBySeq(ctx, seq); err == nil { // exact bound: the cursor row itself
+			before = adapter.BackfillCursor{Timestamp: last.Timestamp, MessageID: last.ID}
+		}
+	case !q.Before.IsZero():
+		before = adapter.BackfillCursor{Timestamp: q.Before}
+	}
+	msgs, more, err := bf.Backfill(ctx, accountID, chatID, before, q.Limit-len(page))
+	if err != nil || len(msgs) == 0 {
+		return false, more, err
+	}
+	return true, more, c.tx(ctx, func(tx *store.Store) error {
+		for i := range msgs {
+			m := msgs[i]
+			m.ChatID = chatID
+			if _, err := c.ingest(ctx, tx, accountID, adapter.Event{Kind: adapter.EvMessage, Message: &m, Backfill: true}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// SearchQuery narrows SearchMessages.
+type SearchQuery struct {
+	Q      string
+	ChatID string
+	Cursor string
+	Limit  int
+}
+
+// SearchMessages searches the local store (api.md §4.4).
+func (c *Core) SearchMessages(ctx context.Context, accountID string, q SearchQuery) ([]model.Message, string, error) {
+	if _, err := c.st.GetAccount(ctx, accountID); errors.Is(err, store.ErrNotFound) {
+		return nil, "", errNotFound("account")
+	}
+	if len(strings.Fields(q.Q)) == 0 {
+		return nil, "", errInvalid("q is required")
+	}
+	rows, next, err := c.st.SearchMessages(ctx, accountID, q.ChatID, q.Q, q.Cursor, q.Limit)
 	if err != nil {
 		if q.Cursor != "" && err.Error() == "bad cursor" {
 			return nil, "", errInvalid("bad cursor")

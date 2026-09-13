@@ -376,3 +376,93 @@ func TestHubRejectsBadHello(t *testing.T) {
 	}
 	resp.Body.Close()
 }
+
+func TestRemoteAdapterPhaseAMethods(t *testing.T) {
+	c, srv := newEnv(t)
+	ctx := context.Background()
+	cl := dial(t, srv)
+	hello := map[string]any{"protocol": 1, "platform": "signal", "adapter": map[string]string{"name": "sig-py", "version": "0.1"},
+		"capabilities": []string{"send.text", "chat.create", "message.history", "self.update"},
+		"login_flows":  []map[string]string{{"id": "qr", "name": "QR"}}}
+	raw, _ := json.Marshal(hello)
+	cl.send(rpcMessage{ID: json.RawMessage("1"), Method: "hello", Params: raw})
+	if _, _, err := cl.conn.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	go cl.loop()
+	eventually(t, func() bool {
+		for _, p := range c.Platforms() {
+			if p.ID == "signal" {
+				return true
+			}
+		}
+		return false
+	})
+	var got []string
+	record := func(name string, result any) {
+		cl.handlers[name] = func(p json.RawMessage) (any, *rpcError) {
+			got = append(got, name+" "+string(p))
+			return result, nil
+		}
+	}
+	cl.handlers["account.add"] = func(json.RawMessage) (any, *rpcError) { return map[string]any{}, nil }
+	record("contact.list", map[string]any{"contacts": []model.Contact{{ID: "+2", Handle: "+2", Names: model.Names{Profile: "Bob"}}}})
+	record("chat.create", model.Chat{ID: "g1", Kind: model.ChatGroup, Name: "Team"})
+	record("chat.update", model.Chat{ID: "g1", Kind: model.ChatGroup, Name: "Team 2"})
+	record("chat.backfill", map[string]any{"messages": []model.Message{{ID: "h1", ChatID: "g1", Sender: model.Sender{ID: "+2"},
+		Timestamp: time.Now().UTC().Add(-time.Hour), Content: model.Content{Type: model.ContentText, Text: "old"}}}, "more": false})
+	record("self.update", model.Contact{ID: "+10000", Names: model.Names{Profile: "Renamed"}})
+	record("contact.block", map[string]any{})
+
+	if _, err := c.CreateAccount(ctx, "sig1", "signal", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	cl.expect("account.add")
+	cl.send(rpcMessage{ID: json.RawMessage("2"), Method: "status", Params: mustJSON(map[string]any{"account_id": "sig1", "status": "connected",
+		"self": model.Contact{ID: "+10000", Handle: "+10000", Names: model.Names{Profile: "Me"}}})})
+	eventually(t, func() bool { cs, _, _ := c.ListContacts(ctx, "sig1", "", "", 10); return len(cs) == 2 })
+
+	ch, err := c.CreateChat(ctx, "sig1", adapter.CreateChatRequest{Name: "Team", Members: []string{"+2"}})
+	if err != nil || ch.ID != "g1" || ch.Name != "Team" {
+		t.Fatalf("create: %+v %v", ch, err)
+	}
+	name := "Team 2"
+	if ch, err = c.PatchChat(ctx, "sig1", "g1", core.ChatPatch{Name: &name}); err != nil || ch.Name != "Team 2" {
+		t.Fatalf("rename: %+v %v", ch, err)
+	}
+	msgs, _, err := c.ListMessages(ctx, "sig1", "g1", core.MessageQuery{Limit: 5, Backfill: true})
+	if err != nil || len(msgs) != 1 || msgs[0].ID != "h1" {
+		t.Fatalf("backfill: %v %v", msgs, err)
+	}
+	up, err := c.Upload(ctx, "sig1", strings.NewReader("PNG"), adapter.MediaMeta{Mime: "image/png"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newName := "Renamed"
+	acc, err := c.UpdateSelf(ctx, "sig1", core.SelfPatch{Name: &newName, AvatarMediaID: up.MediaID})
+	if err != nil || acc.Self == nil || acc.Self.Name != "Renamed" {
+		t.Fatalf("self: %+v %v", acc, err)
+	}
+	if _, err := c.ResolveChat(ctx, "sig1", "+2"); core.AsError(err).Code != "unsupported" {
+		t.Fatalf("resolve without capability: %v", err)
+	}
+	yes := true
+	if _, err := c.PatchContact(ctx, "sig1", "+2", core.ContactPatch{Blocked: &yes}); err != nil {
+		t.Fatalf("block: %v", err)
+	}
+	want := []string{`contact.list`, `chat.create {"account_id":"sig1","kind":"group","members":["+2"],"name":"Team"}`,
+		`chat.update {"account_id":"sig1","chat_id":"g1","name":"Team 2"}`,
+		`chat.backfill {"account_id":"sig1","chat_id":"g1","limit":5}`,
+		`self.update`, `contact.block {"account_id":"sig1","blocked":true,"user_id":"+2"}`}
+	if len(got) != len(want) {
+		t.Fatalf("calls: %v", got)
+	}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Fatalf("call %d: %s\nwant prefix %s", i, got[i], want[i])
+		}
+	}
+	if !strings.Contains(got[4], `"avatar_url":"`) || !strings.Contains(got[4], `"name":"Renamed"`) {
+		t.Fatalf("self.update params: %s", got[4])
+	}
+}

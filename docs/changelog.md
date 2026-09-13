@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-13 06:40 [progress]
+
+Task `20260913-0530-api-framework-completion` Phase A (plan of the same id): platform-backed endpoints the spec promised.
+
+- Adapter contract: `ChatCreator` (`chat.create`), `ChatUpdater` (rename, no capability), `Backfiller` (`message.history`), `SelfUpdater` (`self.update`), `Blocker` (no capability); wire methods `chat.create`, `chat.update`, `chat.backfill`, `self.update` (with `avatar_url`), `contact.block` in the remote shim
+- Core / API: `POST /accounts/{a}/chats` (201, `chat.new`), `PATCH …/chats/{c} {name}` reaches the platform, `GET …/messages?backfill=1` tops a short page up from platform history (stored as history, cursor kept while the platform has more; silently ignored without `message.history`), `GET …/messages/search` (`q`, `chat`, cursor), `PATCH …/self` (name / bio / uploaded avatar → `Account.self`), `PATCH …/contacts/{u} {blocked}`
+- Store: schema v3 — `messages_fts` (FTS5 trigram, external content, triggers, rebuilt on migration); terms under three characters use LIKE so short CJK queries work
+- Adapters: WhatsApp (create/rename group, blocklist, push name / about / profile photo), Telegram (create group, rename chat/channel, block, profile + photo, `messages.getHistory` backfill), Matrix (create/rename room, `m.ignored_user_list`, display name + avatar, `/messages` backfill with E2EE decryption); Signal (hosted) unchanged
+- Tests: core (create/rename/self/block, backfill paging, search), store (FTS paths, rename, block), server routes, remote end-to-end for the new RPCs; the ingest test now waits for the contact sync it raced against
+- Docs: `api.md` §4.4 backfill/search semantics, `adapter-protocol.md` §4 wire rows and §10 interface list, `storage.md` FTS tokenizer and migration table
+
 ## 2026-09-13 03:30 [progress]
 
 Task `20260913-0252-bridgev2-host-signal` (plan of the same id) completed: mautrix bridgev2 network connectors run as chat-bridge adapters; Signal is the first.

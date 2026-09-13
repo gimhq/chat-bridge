@@ -265,3 +265,57 @@ type KeyManager interface {
 type Typer interface {
 	Typing(ctx context.Context, id, chatID, state string) error
 }
+
+// CreateChatRequest is the body of chat.create.
+type CreateChatRequest struct {
+	Kind    string
+	Name    string
+	Members []string
+}
+
+// ChatCreator creates group chats on the platform (chat.create).
+type ChatCreator interface {
+	CreateChat(ctx context.Context, id string, req CreateChatRequest) (model.Chat, error)
+}
+
+// ChatUpdate carries chat metadata that reaches the platform; nil leaves a field alone.
+type ChatUpdate struct {
+	Name *string
+}
+
+// ChatUpdater pushes chat metadata to the platform (chat.update). No capability: every adapter
+// that can rename a chat implements it; the core answers unsupported otherwise.
+type ChatUpdater interface {
+	UpdateChat(ctx context.Context, id, chatID string, p ChatUpdate) (model.Chat, error)
+}
+
+// BackfillCursor names the oldest message the core already holds; zero means "from the newest".
+type BackfillCursor struct {
+	Timestamp time.Time
+	MessageID string
+}
+
+// Backfiller fetches history older than a point (message.history). The bool reports whether
+// more history exists beyond the returned batch.
+type Backfiller interface {
+	Backfill(ctx context.Context, id, chatID string, before BackfillCursor, limit int) ([]model.Message, bool, error)
+}
+
+// SelfUpdate carries profile changes; nil leaves a field alone. Avatar is readable through Media.
+type SelfUpdate struct {
+	Name          *string
+	Bio           *string
+	AvatarMediaID string
+	Media         MediaSource
+}
+
+// SelfUpdater changes the account's own profile (self.update).
+type SelfUpdater interface {
+	UpdateSelf(ctx context.Context, id string, p SelfUpdate) (model.Contact, error)
+}
+
+// Blocker blocks and unblocks users on the platform (contact.block). No capability: every
+// built-in adapter implements it; the core answers unsupported otherwise.
+type Blocker interface {
+	Block(ctx context.Context, id, userID string, blocked bool) error
+}

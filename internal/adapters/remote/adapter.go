@@ -391,3 +391,47 @@ func (a *Adapter) KeysImport(ctx context.Context, id, passphrase string, data []
 func (a *Adapter) Typing(ctx context.Context, id, chatID, state string) error {
 	return a.call(ctx, "chat.typing", map[string]any{"account_id": id, "chat_id": chatID, "state": state}, nil)
 }
+
+// --- Phase A optional interfaces (docs/adapter-protocol.md §4) ---
+
+func (a *Adapter) CreateChat(ctx context.Context, id string, req adapter.CreateChatRequest) (model.Chat, error) {
+	var ch model.Chat
+	err := a.call(ctx, "chat.create", map[string]any{"account_id": id, "kind": req.Kind, "name": req.Name, "members": req.Members}, &ch)
+	return ch, err
+}
+
+func (a *Adapter) UpdateChat(ctx context.Context, id, chatID string, p adapter.ChatUpdate) (model.Chat, error) {
+	var ch model.Chat
+	err := a.call(ctx, "chat.update", map[string]any{"account_id": id, "chat_id": chatID, "name": p.Name}, &ch)
+	return ch, err
+}
+
+func (a *Adapter) Backfill(ctx context.Context, id, chatID string, before adapter.BackfillCursor, limit int) ([]model.Message, bool, error) {
+	params := map[string]any{"account_id": id, "chat_id": chatID, "limit": limit}
+	if before.MessageID != "" || !before.Timestamp.IsZero() {
+		params["before"] = map[string]any{"ts": before.Timestamp, "message_id": before.MessageID}
+	}
+	var out struct {
+		Messages []model.Message `json:"messages"`
+		More     bool            `json:"more"`
+	}
+	ctx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	err := a.call(ctx, "chat.backfill", params, &out)
+	return out.Messages, out.More, err
+}
+
+func (a *Adapter) UpdateSelf(ctx context.Context, id string, p adapter.SelfUpdate) (model.Contact, error) {
+	params := map[string]any{"account_id": id, "name": p.Name, "bio": p.Bio}
+	if p.AvatarMediaID != "" {
+		params["avatar_media_id"] = p.AvatarMediaID
+		params["avatar_url"] = a.hub.mediaGetURL(p.AvatarMediaID)
+	}
+	var c model.Contact
+	err := a.call(ctx, "self.update", params, &c)
+	return c, err
+}
+
+func (a *Adapter) Block(ctx context.Context, id, userID string, blocked bool) error {
+	return a.call(ctx, "contact.block", map[string]any{"account_id": id, "user_id": userID, "blocked": blocked}, nil)
+}

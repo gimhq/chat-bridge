@@ -458,8 +458,12 @@ formats: `{"handle": "+8613800000000"}` → `{"chat_id": "8613800000000@s.whatsa
 | DELETE | `/accounts/{a}/messages/{msg}/reactions/{emoji}` | | 204 |
 | GET | `/accounts/{a}/messages/search` | `q, chat?, cursor, limit` | `{messages, next_cursor}`; local store only |
 
-`backfill=1` asks the adapter to pull older history from the platform when the local store runs
-out; needs `message.history`, otherwise silently ignored.
+`backfill=1` asks the adapter to pull older history from the platform when the local page is
+short: the missing rows are fetched (older than the page's oldest row, or than the cursor row),
+stored as history (no unread count, no auto-download), and the page is re-read. `next_cursor` is
+returned while the platform reports more, even when the local store is exhausted. Needs
+`message.history`, otherwise silently ignored. `search` matches every whitespace-separated term
+against message text (substring, case-insensitive); results are newest first.
 
 SendRequest:
 

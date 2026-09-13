@@ -62,6 +62,19 @@ func (s *Store) SetLocalAlias(ctx context.Context, accountID, userID, alias stri
 	return s.GetContact(ctx, accountID, userID)
 }
 
+// SetBlocked stores the block state the platform accepted.
+func (s *Store) SetBlocked(ctx context.Context, accountID, userID string, blocked bool) (model.Contact, error) {
+	c, err := s.GetContact(ctx, accountID, userID)
+	if err != nil {
+		return model.Contact{}, err
+	}
+	c.Blocked = blocked
+	if err := s.writeContact(ctx, accountID, c); err != nil {
+		return model.Contact{}, err
+	}
+	return s.GetContact(ctx, accountID, userID)
+}
+
 // GetContact returns one contact.
 func (s *Store) GetContact(ctx context.Context, accountID, id string) (model.Contact, error) {
 	row := s.q.QueryRowContext(ctx, `SELECT `+contactCols+` FROM contacts WHERE account_id = ? AND id = ?`, accountID, id)

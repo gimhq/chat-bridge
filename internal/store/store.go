@@ -31,7 +31,7 @@ type Store struct {
 	q  queryer
 }
 
-var migrations = []string{schemaV1, schemaV2}
+var migrations = []string{schemaV1, schemaV2, schemaV3}
 
 // Open opens (or creates) the database at path and applies pending migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -156,6 +156,24 @@ func boolInt(b bool) int {
 }
 
 const schemaV2 = `ALTER TABLE accounts ADD COLUMN adapter TEXT NOT NULL DEFAULT '';`
+
+// schemaV3 adds full-text search over message text. Trigram tokens make substring search work
+// for CJK text (no word boundaries); the index is external-content, so message rows stay the
+// single source of truth and the triggers keep it in step.
+const schemaV3 = `
+CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='seq', tokenize='trigram');
+CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
+END;
+CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.seq, old.text);
+END;
+CREATE TRIGGER messages_fts_au AFTER UPDATE OF text ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.seq, old.text);
+  INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
+END;
+INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');
+`
 
 const schemaV1 = `
 CREATE TABLE accounts (
