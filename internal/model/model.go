@@ -395,6 +395,25 @@ type Webhook struct {
 	CreatedAt time.Time  `json:"created_at"`
 }
 
+// KeyStatus is the E2EE identity of an account (GET /accounts/{a}/keys).
+type KeyStatus struct {
+	DeviceID    string `json:"device_id"`
+	Fingerprint string `json:"fingerprint"`
+	CrossSigned bool   `json:"cross_signed"`
+	Backup      struct {
+		Version string `json:"version,omitempty"`
+		Enabled bool   `json:"enabled"`
+	} `json:"backup"`
+	Sessions int `json:"sessions"`
+}
+
+// KeyVerifyResult is the outcome of POST /accounts/{a}/keys/verify.
+type KeyVerifyResult struct {
+	CrossSigned      bool   `json:"cross_signed"`
+	BackupVersion    string `json:"backup_version,omitempty"`
+	SessionsImported int    `json:"sessions_imported"`
+}
+
 // ResolvedChat is the result of chat.resolve.
 type ResolvedChat struct {
 	ChatID string `json:"chat_id"`

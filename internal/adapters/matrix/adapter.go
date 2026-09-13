@@ -15,7 +15,9 @@ import (
 	"sync"
 	"time"
 
+	"go.mau.fi/util/dbutil"
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/crypto/cryptohelper"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/id"
 
@@ -44,6 +46,7 @@ type session struct {
 	AccessToken string      `json:"access_token"`
 	NextBatch   string      `json:"next_batch"`
 	FilterID    string      `json:"filter_id"`
+	PickleKey   []byte      `json:"pickle_key,omitempty"` // encrypts the E2EE store at rest
 }
 
 // Adapter hosts one mautrix client per account.
@@ -64,7 +67,7 @@ func (a *Adapter) Info() adapter.Info {
 			adapter.CapSendText, adapter.CapSendMedia, adapter.CapSendLocation, adapter.CapReply, adapter.CapThread,
 			adapter.CapEdit, adapter.CapDelete, adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping,
 			adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapPresence, adapter.CapReceipts,
-			adapter.CapMarkdown, adapter.CapHTML,
+			adapter.CapMarkdown, adapter.CapHTML, adapter.CapKeys,
 		},
 		LoginFlows: []model.LoginFlow{
 			{ID: flowPassword, Name: "Username and password"},
@@ -122,6 +125,7 @@ func (a *Adapter) RemoveAccount(ctx context.Context, accountID string) error {
 		return nil
 	}
 	acc.stopSync()
+	acc.closeCrypto()
 	if acc.cli != nil {
 		_, _ = acc.cli.Logout(ctx)
 	}
@@ -149,6 +153,7 @@ func (a *Adapter) Logout(ctx context.Context, accountID string) error {
 	}
 	acc.login.Cancel()
 	acc.stopSync()
+	acc.removeCrypto()
 	if acc.cli != nil {
 		_, _ = acc.cli.Logout(ctx)
 		acc.cli = nil
@@ -268,6 +273,8 @@ type account struct {
 
 	mu        sync.Mutex
 	cli       *mautrix.Client
+	crypto    *cryptohelper.CryptoHelper
+	cryptoDB  *dbutil.Database
 	cancel    context.CancelFunc
 	roomKind  map[id.RoomID]string
 	direct    map[id.UserID]id.RoomID
@@ -300,7 +307,6 @@ func (acc *account) open(s session) error {
 	syncer := mautrix.NewDefaultSyncer()
 	syncer.OnEventType(event.EventMessage, acc.onMessage)
 	syncer.OnEventType(event.EventSticker, acc.onMessage)
-	syncer.OnEventType(event.EventEncrypted, acc.onEncrypted)
 	syncer.OnEventType(event.EventReaction, acc.onReaction)
 	syncer.OnEventType(event.EventRedaction, acc.onRedaction)
 	syncer.OnEventType(event.StateMember, acc.onMember)
@@ -326,6 +332,11 @@ func (acc *account) open(s session) error {
 	acc.mu.Lock()
 	acc.cli = cli
 	acc.mu.Unlock()
+	// The helper decrypts m.room.encrypted and re-dispatches the plaintext through the syncer,
+	// so the handlers above see encrypted rooms exactly like plain ones.
+	if err := acc.openCrypto(&s); err != nil {
+		return fmt.Errorf("e2ee: %w", err)
+	}
 	return nil
 }
 
@@ -337,6 +348,11 @@ func (acc *account) startSync() {
 	cli := acc.cli
 	acc.mu.Unlock()
 	go func() {
+		if err := acc.initCrypto(ctx); err != nil {
+			acc.rep.Log.Error("e2ee init", "err", err)
+			acc.rep.Status(adapter.Status{Status: model.StatusError, Error: &model.Error{Code: "adapter_error", Message: "e2ee init: " + err.Error()}})
+			return
+		}
 		for {
 			err := cli.SyncWithContext(ctx)
 			if ctx.Err() != nil {

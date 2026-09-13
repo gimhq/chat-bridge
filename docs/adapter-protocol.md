@@ -156,6 +156,10 @@ All take `{"account_id": "…", ...}`. Errors use JSON-RPC `error.code`:
 | `message.delete` | `{account_id, chat_id, message_id}` | `{}` | `message.delete` |
 | `message.react` | `{account_id, chat_id, message_id, emoji, remove}` | `{}` | `message.reaction` |
 | `media.fetch` | `{account_id, media_id, remote_ref}` | `{}` after the adapter has PUT the bytes (§7); an error marks the attachment `failed` | |
+| `keys.status` | `{account_id}` | `KeyStatus` (api.md §4.7a) | `keys.manage` |
+| `keys.verify` | `{account_id, recovery_key}` | `KeyVerifyResult` | `keys.manage` |
+| `keys.export` | `{account_id, passphrase}` | `{data}` (base64 of the key file) | `keys.manage` |
+| `keys.import` | `{account_id, passphrase, data}` (base64) | `{sessions_imported}` | `keys.manage` |
 | `request.answer` | `{account_id, request_id, platform_ref, action: "accept"\|"reject", alias?, reason?}` | `{}` | `contact.request` etc. |
 
 `message.send` content arrives exactly as the consumer posted it (§3.5 of the API spec), with
@@ -335,7 +339,7 @@ type Sink interface {
 ```
 
 Optional capabilities are separate interfaces the core type-asserts (`Editor`, `Reactor`,
-`Resolver`, `Backfiller`, `SelfUpdater`, `AliasSetter`, `RequestAnswerer`, `ChatCreator`);
+`Resolver`, `Backfiller`, `SelfUpdater`, `AliasSetter`, `RequestAnswerer`, `ChatCreator`, `KeyManager`);
 `Info().Capabilities` must agree with what is implemented, and the core checks at startup.
 
 The remote-adapter shim implements `Adapter` by forwarding to JSON-RPC and implements `Sink`

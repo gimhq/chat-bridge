@@ -30,3 +30,4 @@ Each plan is a single line linking to its detail file. All detailed information 
 ---
 
 ## Plans
+- [x] [**20260913-0151-telegram-matrix-hardening Harden the Telegram and Matrix adapters**](20260913-0151-telegram-matrix-hardening.md) `2026-09-13`

@@ -45,11 +45,12 @@ type config struct {
 type Adapter struct {
 	log      *slog.Logger
 	sink     adapter.Sink
+	defaults Defaults
 	accounts base.Accounts[*account]
 }
 
-// New returns an unstarted adapter.
-func New(log *slog.Logger) *Adapter { return &Adapter{log: log} }
+// New returns an unstarted adapter. d supplies api_id/api_hash for accounts that omit them.
+func New(log *slog.Logger, d Defaults) *Adapter { return &Adapter{log: log, defaults: d} }
 
 // Info declares Telegram capabilities.
 func (a *Adapter) Info() adapter.Info {
@@ -58,14 +59,16 @@ func (a *Adapter) Info() adapter.Info {
 		Capabilities: []string{
 			adapter.CapSendText, adapter.CapSendMedia, adapter.CapSendLocation, adapter.CapSendContact, adapter.CapReply,
 			adapter.CapEdit, adapter.CapDelete, adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping,
-			adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapPresence, adapter.CapReceipts,
+			adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapPresence, adapter.CapReceipts, adapter.CapMarkdown,
 		},
 		LoginFlows: []model.LoginFlow{
 			{ID: flowPhone, Name: "Phone number + code"},
 			{ID: flowQR, Name: "Scan QR from Telegram app"},
 		},
-		ConfigSchema: json.RawMessage(`{"type":"object","required":["api_id","api_hash"],"properties":{
-			"api_id":{"type":"integer"},"api_hash":{"type":"string","x-secret":true},"device_name":{"type":"string","default":"chat-bridge"}}}`),
+		ConfigSchema: json.RawMessage(`{"type":"object","properties":{
+			"api_id":{"type":"integer","description":"overrides adapters.telegram.api_id"},
+			"api_hash":{"type":"string","x-secret":true,"description":"overrides adapters.telegram.api_hash"},
+			"device_name":{"type":"string","default":"chat-bridge"}}}`),
 	}
 }
 
@@ -78,24 +81,24 @@ func (a *Adapter) Stop(context.Context) error {
 
 // AddAccount builds the client and starts its run loop.
 func (a *Adapter) AddAccount(_ context.Context, accountID string, cfg json.RawMessage, dataDir string) error {
-	var c config
-	if len(cfg) > 0 {
-		if err := json.Unmarshal(cfg, &c); err != nil {
-			return adapter.Errorf(adapter.ErrInvalidInput, "config: %v", err)
-		}
-	}
-	if c.DeviceName == "" {
-		c.DeviceName = "chat-bridge"
+	c, err := resolveConfig(a.defaults, cfg)
+	if err != nil {
+		return err
 	}
 	if acc, err := a.accounts.Get(accountID); err == nil {
 		acc.cfg = c
 		return nil
 	}
-	if c.AppID == 0 || c.AppHash == "" {
-		return adapter.Errorf(adapter.ErrInvalidInput, "config.api_id and config.api_hash are required")
+	state, err := newFileState(statePath(dataDir))
+	if err != nil {
+		return fmt.Errorf("updates state: %w", err)
+	}
+	peerStore, err := newFilePeers(peersPath(dataDir))
+	if err != nil {
+		return fmt.Errorf("peers state: %w", err)
 	}
 	acc := &account{id: accountID, dir: dataDir, cfg: c, rep: base.Reporter{Sink: a.sink, ID: accountID, Log: a.log.With("account", accountID)},
-		seen: map[int]string{}}
+		seen: map[int]string{}, state: state, peerStore: peerStore}
 	a.accounts.Put(accountID, acc)
 	acc.start()
 	return nil
@@ -280,6 +283,8 @@ type account struct {
 	onlineFlag bool           // authorized and updates running
 	seen       map[int]string // message id → chat id, for deletions without a peer
 	seenOrder  []int
+	state      *fileState // updates pts/qts/seq, survives restarts
+	peerStore  *filePeers // access hashes, survives restarts
 }
 
 func (acc *account) sessionPath() string { return filepath.Join(acc.dir, "session.json") }
@@ -305,7 +310,7 @@ func (acc *account) isOnline() bool {
 // start builds a client and runs it until stop.
 func (acc *account) start() {
 	dispatcher := tg.NewUpdateDispatcher()
-	gaps := updates.New(updates.Config{Handler: dispatcher})
+	gaps := updates.New(updates.Config{Handler: dispatcher, Storage: acc.state})
 	cli := telegram.NewClient(acc.cfg.AppID, acc.cfg.AppHash, telegram.Options{
 		SessionStorage: &session.FileStorage{Path: acc.sessionPath()},
 		UpdateHandler:  gaps,
@@ -314,7 +319,7 @@ func (acc *account) start() {
 	ctx, cancel := context.WithCancel(context.Background())
 	acc.mu.Lock()
 	acc.cli, acc.dispatcher, acc.gaps, acc.runCtx, acc.runCancel = cli, dispatcher, gaps, ctx, cancel
-	acc.peers = peers.Options{}.Build(cli.API())
+	acc.peers = peers.Options{Storage: acc.peerStore}.Build(cli.API())
 	acc.isReady, acc.onlineFlag, acc.self = false, false, nil
 	acc.mu.Unlock()
 	acc.wireHandlers()
@@ -367,6 +372,12 @@ func (acc *account) stop() {
 	}
 	acc.runCancel, acc.onlineFlag, acc.isReady = nil, false, false
 	acc.mu.Unlock()
+	if acc.state != nil {
+		_ = acc.state.Flush()
+	}
+	if acc.peerStore != nil {
+		_ = acc.peerStore.Flush()
+	}
 }
 
 // online resolves self, starts the updates manager, loads dialogs, and reports connected.

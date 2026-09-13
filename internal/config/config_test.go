@@ -9,7 +9,7 @@ import (
 
 var envKeys = []string{"CHATBRIDGE_CONFIG", "CHATBRIDGE_SERVER_TOKEN", "CHATBRIDGE_SERVER_TOKEN_FILE", "CHATBRIDGE_SERVER_ADDR",
 	"CHATBRIDGE_LOG_LEVEL", "CHATBRIDGE_STORAGE_DATA_DIR", "CHATBRIDGE_MEDIA_AUTO_DOWNLOAD", "CHATBRIDGE_MEDIA_AUTO_DOWNLOAD_MAX_MB",
-	"CHATBRIDGE_MEDIA_MAX_UPLOAD_MB", "CHATBRIDGE_EVENTS_RETENTION_DAYS"}
+	"CHATBRIDGE_MEDIA_MAX_UPLOAD_MB", "CHATBRIDGE_EVENTS_RETENTION_DAYS", "CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID", "CHATBRIDGE_ADAPTERS_TELEGRAM_API_HASH"}
 
 func clearEnv(t *testing.T) {
 	t.Helper()
@@ -138,5 +138,33 @@ log:
 	}
 	if _, err := Load(""); err == nil {
 		t.Fatal("broken yaml accepted")
+	}
+}
+
+func TestAdapterDefaults(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("CHATBRIDGE_SERVER_TOKEN", "0123456789abcdef")
+	cfg, err := Load("")
+	if err != nil || cfg.Adapters.Telegram.APIID != 0 || cfg.Adapters.Telegram.APIHash != "" {
+		t.Fatalf("defaults: %+v %v", cfg.Adapters, err)
+	}
+	// Third-level keys map as CHATBRIDGE_ADAPTERS_<PLATFORM>_<KEY>.
+	t.Setenv("CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID", "12345")
+	t.Setenv("CHATBRIDGE_ADAPTERS_TELEGRAM_API_HASH", "deadbeef")
+	cfg, err = Load("")
+	if err != nil || cfg.Adapters.Telegram.APIID != 12345 || cfg.Adapters.Telegram.APIHash != "deadbeef" {
+		t.Fatalf("env: %+v %v", cfg.Adapters, err)
+	}
+	// File form.
+	dir := t.TempDir()
+	path := filepath.Join(dir, "cb.yaml")
+	if err := os.WriteFile(path, []byte("server:\n  token: file-token-0123456789\nadapters:\n  telegram:\n    api_id: 777\n    api_hash: h\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID", "")
+	t.Setenv("CHATBRIDGE_ADAPTERS_TELEGRAM_API_HASH", "")
+	cfg, err = Load(path)
+	if err != nil || cfg.Adapters.Telegram.APIID != 777 || cfg.Adapters.Telegram.APIHash != "h" {
+		t.Fatalf("file: %+v %v", cfg.Adapters, err)
 	}
 }

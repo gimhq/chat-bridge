@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -416,6 +417,74 @@ func (h *handlers) fetchMedia(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusAccepted, att)
+}
+
+// --- keys ---
+
+func (h *handlers) keysStatus(w http.ResponseWriter, r *http.Request) {
+	st, err := h.core.KeysStatus(r.Context(), param(r, "account"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
+}
+
+func (h *handlers) keysVerify(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		RecoveryKey string `json:"recovery_key"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	res, err := h.core.KeysVerify(r.Context(), param(r, "account"), req.RecoveryKey)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
+}
+
+func (h *handlers) keysExport(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Passphrase string `json:"passphrase"`
+	}
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	data, err := h.core.KeysExport(r.Context(), param(r, "account"), req.Passphrase)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+param(r, "account")+`-keys.txt"`)
+	_, _ = w.Write(data)
+}
+
+func (h *handlers) keysImport(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	if err := r.ParseMultipartForm(8 << 20); err != nil {
+		writeErr(w, &core.Error{Status: http.StatusBadRequest, Code: "invalid_request", Message: "multipart form with file and passphrase expected"})
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, &core.Error{Status: http.StatusBadRequest, Code: "invalid_request", Message: "file is required"})
+		return
+	}
+	defer func() { _ = file.Close() }()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	n, err := h.core.KeysImport(r.Context(), param(r, "account"), r.FormValue("passphrase"), data)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"sessions_imported": n})
 }
 
 // --- contacts ---

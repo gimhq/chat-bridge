@@ -96,6 +96,11 @@ func New(opts Options) http.Handler {
 
 			r.Post("/media", h.upload)
 
+			r.Get("/keys", h.keysStatus)
+			r.Post("/keys/verify", h.keysVerify)
+			r.Post("/keys/export", h.keysExport)
+			r.Post("/keys/import", h.keysImport)
+
 			r.Get("/contacts", h.listContacts)
 			r.Get("/contacts/{user}", h.getContact)
 			r.Patch("/contacts/{user}", h.patchContact)

@@ -24,3 +24,8 @@ events:
 
 log:
   level: info                         # debug | info | warn | error
+
+adapters:
+  telegram:
+    api_id: 0                         # application credentials from https://my.telegram.org; shared by all Telegram accounts
+    api_hash: ""                      # secret; an account's own config may override both

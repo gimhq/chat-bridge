@@ -19,8 +19,12 @@ Environment variables (`CHATBRIDGE_<SECTION>_<KEY>`) override the file.
 Run locally without Docker:
 
 ```bash
-go run ./cmd/chat-bridge -config chat-bridge.yaml
+go run -tags goolm ./cmd/chat-bridge -config chat-bridge.yaml
 ```
+
+`-tags goolm` selects the pure-Go olm implementation for Matrix end-to-end encryption (the
+default backend needs cgo and libolm); every `go build`, `go test`, and `go vet` in this
+repository carries it.
 
 First account, WhatsApp via QR:
 
@@ -33,8 +37,10 @@ curl -s -H "$T" "$B/events?wait=30"                                             
 
 Every platform follows the same shape: `POST /accounts` → `POST /accounts/{a}/login` (QR, code,
 password… described by the step machine) → chats, messages, media, contacts under
-`/accounts/{a}/…` → events on `/events`. Telegram needs `api_id`/`api_hash` in `config`, Matrix a
-`homeserver`.
+`/accounts/{a}/…` → events on `/events`. Telegram needs `api_id`/`api_hash` (once, under
+`adapters.telegram` in the config, or per account in `config`), Matrix a `homeserver`. Matrix
+rooms are end-to-end encrypted transparently; `POST /accounts/{a}/keys/verify` with the
+account's recovery key cross-signs the bridge device and restores the key backup.
 
 ## Layout
 
@@ -55,7 +61,7 @@ docs/                   specs, architecture, PMA task/plan tracking
 ## Quality gates
 
 ```bash
-test -z "$(gofmt -l .)" && go vet ./... && golangci-lint run && go test ./... && go build ./...
+test -z "$(gofmt -l .)" && go vet -tags goolm ./... && golangci-lint run && go test -tags goolm ./... && go build -tags goolm ./...
 ```
 
 `docker build --target test .` runs `go vet` and the unit tests in the build toolchain.

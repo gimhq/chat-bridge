@@ -323,7 +323,17 @@ func (acc *account) convertService(m *tg.MessageService, e tg.Entities) []adapte
 
 // convertContent maps text and media of a message.
 func convertContent(m *tg.Message, mediaID string) model.Content {
-	text := m.Message
+	text, formatted := entitiesToMarkdown(m.Message, m.Entities)
+	format := ""
+	if formatted {
+		format = "markdown"
+	}
+	c := convertMedia(m, text, mediaID)
+	c.Format = format
+	return c
+}
+
+func convertMedia(m *tg.Message, text, mediaID string) model.Content {
 	if m.Media == nil {
 		return model.Content{Type: model.ContentText, Text: text}
 	}

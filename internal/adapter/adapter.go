@@ -36,6 +36,7 @@ const (
 	CapHTML         = "format.html"
 	CapSelfUpdate   = "self.update"
 	CapContactAlias = "contact.alias"
+	CapKeys         = "keys.manage"
 )
 
 // Error codes an adapter returns; the core maps them to HTTP statuses.
@@ -250,6 +251,14 @@ type Reactor interface {
 // Reader sends read receipts (chat.read) for messages by senderID.
 type Reader interface {
 	MarkRead(ctx context.Context, id, chatID string, messageIDs []string, senderID string) error
+}
+
+// KeyManager exposes end-to-end encryption key management (keys.manage).
+type KeyManager interface {
+	KeysStatus(ctx context.Context, id string) (model.KeyStatus, error)
+	KeysVerify(ctx context.Context, id, recoveryKey string) (model.KeyVerifyResult, error)
+	KeysExport(ctx context.Context, id, passphrase string) ([]byte, error)
+	KeysImport(ctx context.Context, id, passphrase string, data []byte) (int, error)
 }
 
 // Typer sends typing indicators (chat.typing).

@@ -2,6 +2,7 @@ package matrix
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"maunium.net/go/mautrix/event"
@@ -39,7 +40,7 @@ func TestConvertContent(t *testing.T) {
 		t.Fatalf("caption: %+v", captioned)
 	}
 	enc := convertContent(&event.MessageEventContent{MsgType: event.MsgImage, Body: "x", File: &event.EncryptedFileInfo{URL: "mxc://hs/enc"}}, event.EventMessage, "e4")
-	if enc.Attachments[0].State != model.MediaFailed || enc.Attachments[0].RemoteRef != nil {
+	if enc.Attachments[0].State != model.MediaRemote || !strings.Contains(string(enc.Attachments[0].RemoteRef), `"file"`) {
 		t.Fatalf("encrypted: %+v", enc.Attachments[0])
 	}
 	voice := convertContent(&event.MessageEventContent{MsgType: event.MsgAudio, Body: "v.ogg", URL: "mxc://hs/v", MSC3245Voice: &event.MSC3245Voice{}}, event.EventMessage, "e5")

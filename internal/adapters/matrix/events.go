@@ -14,9 +14,11 @@ import (
 	"gimhq/chat-bridge/internal/model"
 )
 
-// remoteRef is stored per attachment so FetchMedia can download later.
+// remoteRef is stored per attachment so FetchMedia can download later. File is set for
+// encrypted attachments and carries the key needed to decrypt after download.
 type remoteRef struct {
-	URL string `json:"url"`
+	URL  string                   `json:"url"`
+	File *event.EncryptedFileInfo `json:"file,omitempty"`
 }
 
 func (acc *account) chatHint(room id.RoomID) *model.Chat {
@@ -118,22 +120,13 @@ func mediaContent(t, caption, mediaID string, c *event.MessageEventContent) mode
 		caption = ""
 	}
 	if c.File != nil {
-		// Encrypted attachments cannot be fetched without E2EE support.
-		att.State = model.MediaFailed
+		att.RemoteRef, _ = json.Marshal(remoteRef{URL: string(c.File.URL), File: c.File})
 		return model.Content{Type: t, Text: caption, Attachments: []model.Attachment{att}}
 	}
 	if c.URL != "" {
 		att.RemoteRef, _ = json.Marshal(remoteRef{URL: string(c.URL)})
 	}
 	return model.Content{Type: t, Text: caption, Attachments: []model.Attachment{att}}
-}
-
-func (acc *account) onEncrypted(_ context.Context, evt *event.Event) {
-	m := model.Message{
-		ID: evt.ID.String(), ChatID: evt.RoomID.String(), Sender: model.Sender{ID: evt.Sender.String()}, FromMe: evt.Sender == acc.selfID(),
-		Timestamp: msTime(evt.Timestamp), Content: model.Content{Type: model.ContentUnsupported, Unsupported: &model.Unsupported{PlatformType: "m.room.encrypted"}},
-	}
-	acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: acc.chatHint(evt.RoomID), Sender: userContact(evt.Sender, "")})
 }
 
 func (acc *account) onReaction(_ context.Context, evt *event.Event) {
@@ -176,6 +169,10 @@ func (acc *account) onMember(_ context.Context, evt *event.Event) {
 	evs := []adapter.Event{
 		{Kind: adapter.EvContact, Contact: ct},
 		{Kind: adapter.EvMember, Member: &adapter.Member{ChatID: evt.RoomID.String(), UserID: user.String(), ChatName: m.Displayname, Left: left}},
+	}
+	// A direct chat is named after the other member.
+	if acc.kindOf(evt.RoomID) == model.ChatDirect && user != acc.selfID() && m.Displayname != "" && !left {
+		evs = append(evs, adapter.Event{Kind: adapter.EvChat, Chat: &model.Chat{ID: evt.RoomID.String(), Kind: model.ChatDirect, Name: m.Displayname}})
 	}
 	if evt.Unsigned.PrevContent != nil {
 		prev := evt.Unsigned.PrevContent.AsMember()

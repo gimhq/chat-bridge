@@ -1,4 +1,8 @@
 version: "2"
+run:
+  # Matrix E2EE uses the pure-Go olm implementation; the default backend needs cgo + libolm.
+  build-tags:
+    - goolm
 linters:
   default: standard
   enable:

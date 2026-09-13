@@ -44,6 +44,13 @@ type Config struct {
 	Log struct {
 		Level string `koanf:"level" validate:"oneof=debug info warn error"`
 	} `koanf:"log"`
+	// Adapters holds platform-wide settings that every account of a platform inherits.
+	Adapters struct {
+		Telegram struct {
+			APIID   int    `koanf:"api_id"`
+			APIHash string `koanf:"api_hash"`
+		} `koanf:"telegram"`
+	} `koanf:"adapters"`
 
 	// Source is the absolute path of the file that was loaded ("" when none).
 	Source string `koanf:"-"`
@@ -112,12 +119,18 @@ func Load(path string) (Config, error) {
 }
 
 // envKey maps SERVER_TOKEN_FILE → server.token_file: the first token is the section, the rest
-// stays underscored.
+// stays underscored. Under `adapters` the second token is the platform:
+// ADAPTERS_TELEGRAM_API_ID → adapters.telegram.api_id.
 func envKey(s string) string {
 	s = strings.ToLower(s)
 	section, rest, ok := strings.Cut(s, "_")
 	if !ok {
 		return s
+	}
+	if section == "adapters" {
+		if platform, key, ok := strings.Cut(rest, "_"); ok {
+			return section + "." + platform + "." + key
+		}
 	}
 	return section + "." + rest
 }

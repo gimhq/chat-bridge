@@ -358,6 +358,36 @@ func (a *Adapter) MarkRead(ctx context.Context, id, chatID string, ids []string,
 	return a.call(ctx, "chat.mark_read", map[string]any{"account_id": id, "chat_id": chatID, "message_ids": ids, "sender_id": senderID}, nil)
 }
 
+func (a *Adapter) KeysStatus(ctx context.Context, id string) (model.KeyStatus, error) {
+	var st model.KeyStatus
+	err := a.call(ctx, "keys.status", acct{id}, &st)
+	return st, err
+}
+
+func (a *Adapter) KeysVerify(ctx context.Context, id, recoveryKey string) (model.KeyVerifyResult, error) {
+	var res model.KeyVerifyResult
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+	err := a.call(ctx, "keys.verify", map[string]any{"account_id": id, "recovery_key": recoveryKey}, &res)
+	return res, err
+}
+
+func (a *Adapter) KeysExport(ctx context.Context, id, passphrase string) ([]byte, error) {
+	var out struct {
+		Data []byte `json:"data"` // base64 on the wire
+	}
+	err := a.call(ctx, "keys.export", map[string]any{"account_id": id, "passphrase": passphrase}, &out)
+	return out.Data, err
+}
+
+func (a *Adapter) KeysImport(ctx context.Context, id, passphrase string, data []byte) (int, error) {
+	var out struct {
+		SessionsImported int `json:"sessions_imported"`
+	}
+	err := a.call(ctx, "keys.import", map[string]any{"account_id": id, "passphrase": passphrase, "data": data}, &out)
+	return out.SessionsImported, err
+}
+
 func (a *Adapter) Typing(ctx context.Context, id, chatID, state string) error {
 	return a.call(ctx, "chat.typing", map[string]any{"account_id": id, "chat_id": chatID, "state": state}, nil)
 }

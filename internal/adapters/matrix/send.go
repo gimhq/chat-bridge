@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"maunium.net/go/mautrix"
+	"maunium.net/go/mautrix/crypto/attachment"
 	"maunium.net/go/mautrix/event"
 	"maunium.net/go/mautrix/format"
 	"maunium.net/go/mautrix/id"
@@ -103,16 +104,33 @@ func buildContent(ctx context.Context, cli *mautrix.Client, req adapter.SendRequ
 			return nil, event.Type{}, adapter.Errorf(adapter.ErrInvalidInput, "open media: %v", err)
 		}
 		defer func() { _ = rc.Close() }()
-		up, err := cli.UploadMedia(ctx, mautrix.ReqUploadMedia{Content: rc, ContentLength: meta.Size, ContentType: meta.Mime, FileName: meta.FileName})
-		if err != nil {
-			return nil, event.Type{}, mapErr("upload", err)
-		}
 		name := meta.FileName
 		if name == "" {
 			name = c.Type
 		}
-		mc := &event.MessageEventContent{Body: name, URL: up.ContentURI.CUString(),
+		mc := &event.MessageEventContent{Body: name,
 			Info: &event.FileInfo{MimeType: meta.Mime, Size: int(meta.Size), Width: meta.Width, Height: meta.Height, Duration: int(meta.DurationMs)}}
+		encrypted, _ := cli.StateStore.IsEncrypted(ctx, id.RoomID(req.ChatID))
+		if encrypted && cli.Crypto != nil {
+			// Attachments in encrypted rooms are encrypted client-side; only the key travels in the event.
+			plain, err := io.ReadAll(rc)
+			if err != nil {
+				return nil, event.Type{}, err
+			}
+			ef := attachment.NewEncryptedFile()
+			data := ef.Encrypt(plain)
+			up, err := cli.UploadMedia(ctx, mautrix.ReqUploadMedia{ContentBytes: data, ContentType: "application/octet-stream"})
+			if err != nil {
+				return nil, event.Type{}, mapErr("upload", err)
+			}
+			mc.File = &event.EncryptedFileInfo{EncryptedFile: *ef, URL: up.ContentURI.CUString()}
+		} else {
+			up, err := cli.UploadMedia(ctx, mautrix.ReqUploadMedia{Content: rc, ContentLength: meta.Size, ContentType: meta.Mime, FileName: meta.FileName})
+			if err != nil {
+				return nil, event.Type{}, mapErr("upload", err)
+			}
+			mc.URL = up.ContentURI.CUString()
+		}
 		if c.Text != "" {
 			mc.FileName, mc.Body = name, c.Text
 		}
@@ -323,8 +341,22 @@ func (a *Adapter) FetchMedia(ctx context.Context, accountID, _ string, ref json.
 		return adapter.MediaMeta{}, mapErr("download", err)
 	}
 	defer drain(resp.Body)
-	if _, err := io.Copy(w, resp.Body); err != nil {
+	if r.File == nil {
+		if _, err := io.Copy(w, resp.Body); err != nil {
+			return adapter.MediaMeta{}, base.PlatformErr("download", err)
+		}
+		return adapter.MediaMeta{Mime: resp.Header.Get("Content-Type")}, nil
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return adapter.MediaMeta{}, base.PlatformErr("download", err)
 	}
-	return adapter.MediaMeta{Mime: resp.Header.Get("Content-Type")}, nil
+	plain, err := r.File.Decrypt(data)
+	if err != nil {
+		return adapter.MediaMeta{}, base.PlatformErr("decrypt attachment", err)
+	}
+	if _, err := w.Write(plain); err != nil {
+		return adapter.MediaMeta{}, err
+	}
+	return adapter.MediaMeta{}, nil
 }

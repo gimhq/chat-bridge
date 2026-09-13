@@ -527,3 +527,36 @@ func TestSendFailureMapsToPlatformError(t *testing.T) {
 		t.Fatal("failed send was stored")
 	}
 }
+
+func TestKeyManagement(t *testing.T) {
+	c, f := newCore(t)
+	ctx := context.Background()
+	connected(t, c, f, "a1")
+	// The fake declares keys.manage only when asked to.
+	if _, err := c.KeysStatus(ctx, "a1"); AsError(err).Code != "unsupported" {
+		t.Fatalf("without capability: %v", err)
+	}
+	f.Keys = true
+	st, err := c.KeysStatus(ctx, "a1")
+	if err != nil || st.DeviceID != "DEV" || st.CrossSigned {
+		t.Fatalf("status: %+v %v", st, err)
+	}
+	if _, err := c.KeysVerify(ctx, "a1", ""); AsError(err).Status != http.StatusBadRequest {
+		t.Fatalf("empty recovery key: %v", err)
+	}
+	res, err := c.KeysVerify(ctx, "a1", "EsTc ...")
+	if err != nil || !res.CrossSigned || res.BackupVersion != "3" || res.SessionsImported != 7 {
+		t.Fatalf("verify: %+v %v", res, err)
+	}
+	if st, _ := c.KeysStatus(ctx, "a1"); !st.CrossSigned {
+		t.Fatal("status not updated after verify")
+	}
+	data, err := c.KeysExport(ctx, "a1", "pass")
+	if err != nil || string(data) != "EXPORT:pass" {
+		t.Fatalf("export: %q %v", data, err)
+	}
+	n, err := c.KeysImport(ctx, "a1", "pass", []byte("FILE"))
+	if err != nil || n != 2 {
+		t.Fatalf("import: %d %v", n, err)
+	}
+}

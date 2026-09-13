@@ -7,6 +7,11 @@ any platform, any language  <-> remote adapters -------/     |
         (WebSocket + JSON-RPC on /adapter/v1)       SQLite (chatbridge.db) + media/<sha256> + accounts/<id>/
 ```
 
+Per-account adapter state under `accounts/<id>/`: WhatsApp `whatsmeow.db`; Telegram
+`session.json`, `updates.json` (pts/qts for gap recovery), `peers.json` (access hashes); Matrix
+`session.json` (token, sync cursor, pickle key) and `crypto.db` (olm account, megolm sessions,
+device keys, room state — opened with modernc, `-tags goolm`).
+
 The core is the only owner of consumer-visible state. Adapters are interchangeable executors:
 each is identified by `platform/instance`, every account is bound to exactly one instance, and an
 adapter leaving or returning changes account status but never account data.

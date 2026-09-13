@@ -25,7 +25,7 @@ the fast path; everything else waits for explicit approval such as `proceed`.
 - Config: defaults < `chat-bridge.yaml` (`-config` / `CHATBRIDGE_CONFIG` / `./chat-bridge.yaml`) < `CHATBRIDGE_<SECTION>_<KEY>` env, see `docs/api.md` §2.2
 - Dev URL routing: not used; single HTTP service on `:8080`
 - Deployment target: distroless static nonroot container (`Dockerfile`, `compose.yaml`)
-- Quality-gate command: `test -z "$(gofmt -l .)" && go vet ./... && golangci-lint run && go test ./... && go build ./...`
+- Quality-gate command: `test -z "$(gofmt -l .)" && go vet -tags goolm ./... && golangci-lint run && go test -tags goolm ./... && go build -tags goolm ./...` (the `goolm` tag is mandatory: it selects the pure-Go olm backend for Matrix E2EE; `.golangci.yml` carries it too)
 - Fast path: enabled (default)
 
 ### Local divergences

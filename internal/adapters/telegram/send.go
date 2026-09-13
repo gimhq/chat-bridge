@@ -11,6 +11,7 @@ import (
 
 	"github.com/gotd/td/telegram/downloader"
 	"github.com/gotd/td/telegram/message"
+	"github.com/gotd/td/telegram/message/html"
 	"github.com/gotd/td/telegram/message/styling"
 	"github.com/gotd/td/telegram/message/unpack"
 	"github.com/gotd/td/telegram/peers"
@@ -34,11 +35,25 @@ func (a *Adapter) online(accountID string) (*account, *tg.Client, error) {
 	return acc, cli.API(), nil
 }
 
-func caption(text string) []styling.StyledTextOption {
+// styled renders text either plain or, for format markdown, through Telegram HTML entities.
+func (acc *account) styled(text, format string) []styling.StyledTextOption {
 	if text == "" {
 		return nil
 	}
-	return []styling.StyledTextOption{styling.Plain(text)}
+	if format != "markdown" {
+		return []styling.StyledTextOption{styling.Plain(text)}
+	}
+	acc.mu.Lock()
+	pm := acc.peers
+	acc.mu.Unlock()
+	resolver := func(id int64) (tg.InputUserClass, error) {
+		u, err := pm.ResolveUserID(context.Background(), id)
+		if err != nil {
+			return nil, err
+		}
+		return u.InputUser(), nil
+	}
+	return []styling.StyledTextOption{html.String(resolver, markdownToHTML(text))}
 }
 
 // SendMessage sends text, media, a location, or a contact card.
@@ -61,13 +76,13 @@ func (a *Adapter) SendMessage(ctx context.Context, accountID string, req adapter
 	var upd tg.UpdatesClass
 	switch c.Type {
 	case model.ContentText:
-		upd, err = b.Text(ctx, c.Text)
+		upd, err = b.StyledText(ctx, acc.styled(c.Text, c.Format)...)
 	case model.ContentLocation:
 		l := c.Location
 		if l.Name != "" || l.Address != "" {
-			upd, err = b.Media(ctx, message.Venue(l.Lat, l.Lon, 0, l.Name, l.Address, caption(c.Text)...))
+			upd, err = b.Media(ctx, message.Venue(l.Lat, l.Lon, 0, l.Name, l.Address, acc.styled(c.Text, c.Format)...))
 		} else {
-			upd, err = b.Media(ctx, message.GeoPoint(l.Lat, l.Lon, 0, caption(c.Text)...))
+			upd, err = b.Media(ctx, message.GeoPoint(l.Lat, l.Lon, 0, acc.styled(c.Text, c.Format)...))
 		}
 	case model.ContentContact:
 		card := c.Contacts[0]
@@ -105,7 +120,7 @@ func (acc *account) sendMedia(ctx context.Context, api *tg.Client, b *message.Bu
 	if err != nil {
 		return nil, base.PlatformErr("upload", err)
 	}
-	cap := caption(req.Content.Text)
+	cap := acc.styled(req.Content.Text, req.Content.Format)
 	switch req.Content.Type {
 	case model.ContentImage:
 		return b.Media(ctx, message.UploadedPhoto(f, cap...))
@@ -136,7 +151,7 @@ func (a *Adapter) EditMessage(ctx context.Context, accountID, chatID, msgID stri
 	if err != nil {
 		return model.Message{}, err
 	}
-	if _, err := message.NewSender(api).To(peer.InputPeer()).Edit(id).Text(ctx, c.Text); err != nil {
+	if _, err := message.NewSender(api).To(peer.InputPeer()).Edit(id).StyledText(ctx, acc.styled(c.Text, c.Format)...); err != nil {
 		return model.Message{}, base.PlatformErr("edit", err)
 	}
 	return model.Message{ID: msgID, ChatID: chatID, Content: c}, nil

@@ -74,6 +74,8 @@ maps to `CHATBRIDGE_<SECTION>_<KEY>`; list values are comma separated in the env
 | `media.max_upload_mb` | `CHATBRIDGE_MEDIA_MAX_UPLOAD_MB` | `64` | cap for `POST /accounts/{a}/media` |
 | `events.retention_days` | `CHATBRIDGE_EVENTS_RETENTION_DAYS` | `7` | event log retention |
 | `log.level` | `CHATBRIDGE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
+| `adapters.telegram.api_id` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID` | — | Telegram application id (my.telegram.org), inherited by every Telegram account |
+| `adapters.telegram.api_hash` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_HASH` | — | Telegram application hash (secret); an account's own `config` may override both |
 
 Data directory layout (`storage.md` §1):
 
@@ -168,6 +170,7 @@ Strings an account advertises. A request that needs an absent capability fails w
 | `chat.members` | list and change participants |
 | `self.update` | own profile name / bio / avatar can be changed |
 | `contact.alias` | owner-set alias written back to the platform or bridge store |
+| `keys.manage` | end-to-end encryption key management (§4.7a): device identity, cross-signing, key backup, export/import |
 | `contact.request` | friend requests exist and can be accepted/rejected |
 | `chat.invite` | group/room invites can be accepted/rejected |
 | `chat.join_request` | join requests to owned groups can be approved |
@@ -414,8 +417,8 @@ built-in adapters:
 | Platform | Required | Optional | Login flows |
 |---|---|---|---|
 | `whatsapp` | — | `device_name` | `qr`, `phone` (pairing code) |
-| `telegram` | `api_id`, `api_hash` (from my.telegram.org, `api_hash` is secret) | `device_name` | `phone` (code, then 2FA password if enabled), `qr` |
-| `matrix` | `homeserver` (base URL) | `device_name` | `password` (user + password), `token` (user + access token) |
+| `telegram` | — (`api_id` / `api_hash` come from `adapters.telegram.*`; either may be overridden per account) | `device_name` | `phone` (code, then 2FA password if enabled), `qr` (also asks for the 2FA password) |
+| `matrix` | `homeserver` (base URL) | `device_name` | `password` (user + password), `token` (user + access token). Rooms are end-to-end encrypted transparently; see §4.7a |
 
 ### 4.2 Login (see §5)
 
@@ -495,6 +498,23 @@ Media IDs are global (not account-scoped) because the consumer already got them 
 | GET | `/accounts/{a}/contacts` | `cursor, limit, q?` | `{contacts: [Contact], next_cursor}` |
 | GET | `/accounts/{a}/contacts/{user}` | | Contact |
 | PATCH | `/accounts/{a}/contacts/{user}` | `{alias?, blocked?}` | Contact; `alias` needs `contact.alias` |
+
+### 4.7a Keys (end-to-end encryption)
+
+Only platforms with client-side encryption expose these (Matrix today; capability `keys.manage`,
+others answer `422 unsupported`). Messages in encrypted rooms are decrypted and encrypted by the
+bridge without any call here; these endpoints establish trust and durability of the keys.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/accounts/{a}/keys` | | `{device_id, fingerprint, cross_signed, backup: {version, enabled}, sessions}` |
+| POST | `/accounts/{a}/keys/verify` | `{recovery_key}` | `{cross_signed, backup_version, sessions_imported}` — cross-signs this device with the account's recovery key (other clients then show it as verified) and restores the server-side key backup so history from before the login decrypts. The recovery key is used once and not stored. |
+| POST | `/accounts/{a}/keys/export` | `{passphrase}` | encrypted key file (`application/octet-stream`, Element-compatible) |
+| POST | `/accounts/{a}/keys/import` | multipart `file`, `passphrase` | `{sessions_imported}` |
+
+An event that cannot be decrypted is stored as `content.type: unsupported` with
+`platform_type: m.room.encrypted` plus a `platform.event` (`decrypt_failed`) carrying the reason;
+once the key arrives (backup restore, key request answered) new events decrypt normally.
 
 ### 4.7 Persons
 
@@ -692,9 +712,10 @@ envelope. A `: keepalive` comment every 15 s.
 | edit | no | yes | yes (`m.replace`) | no |
 | delete | yes (revoke, time-limited) | yes | yes (redaction) | yes (recall, 2 min) |
 | reactions | yes | yes | yes (`m.reaction`) | no |
-| `format` | limited markdown | MarkdownV2 / HTML | HTML | plain only |
+| `format` | limited markdown | markdown subset ↔ entities (bold, italic, strike, code, pre, links, mentions) | HTML | plain only |
 | receipts | delivered + read | read (private only) | read | none |
 | history backfill | no (on-device only) | yes | yes | no |
+| end-to-end encryption | always (protocol) | secret chats not supported | yes (megolm; `keys.manage`) | always (protocol) |
 | owner alias | phone address book (read-only) | contact name (read/write) | bridge-local | 备注 (read/write) |
 | per-chat nickname | none | none | room displayname | 群昵称 |
 | contact request | none (anyone can message) | none | none | yes (must accept) |

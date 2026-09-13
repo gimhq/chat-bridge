@@ -70,7 +70,7 @@ func run() error {
 		EventRetention: time.Duration(cfg.Events.RetentionDays) * 24 * time.Hour,
 	})
 	c.Register(whatsapp.New(log.With("adapter", "whatsapp")))
-	c.Register(telegram.New(log.With("adapter", "telegram")))
+	c.Register(telegram.New(log.With("adapter", "telegram"), telegram.Defaults{AppID: cfg.Adapters.Telegram.APIID, AppHash: cfg.Adapters.Telegram.APIHash}))
 	c.Register(matrix.New(log.With("adapter", "matrix")))
 	if err := c.Start(ctx); err != nil {
 		return err

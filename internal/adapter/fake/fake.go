@@ -26,6 +26,8 @@ type Adapter struct {
 	nextID   int
 
 	Instance string
+	Keys     bool // advertise keys.manage
+	verified bool
 	Sent     []adapter.SendRequest
 	Reacted  []string
 	Deleted  []string
@@ -40,10 +42,14 @@ func New() *Adapter {
 
 // Info declares a broad capability set.
 func (a *Adapter) Info() adapter.Info {
+	caps := []string{adapter.CapSendText, adapter.CapSendMedia, adapter.CapReply, adapter.CapEdit, adapter.CapDelete,
+		adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping, adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapReceipts}
+	if a.Keys {
+		caps = append(caps, adapter.CapKeys)
+	}
 	return adapter.Info{
 		Platform: Platform, Instance: a.Instance, Name: "Fake", Version: "test",
-		Capabilities: []string{adapter.CapSendText, adapter.CapSendMedia, adapter.CapReply, adapter.CapEdit, adapter.CapDelete,
-			adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping, adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapReceipts},
+		Capabilities: caps,
 		LoginFlows:   []model.LoginFlow{{ID: "qr", Name: "QR"}, {ID: "phone", Name: "Phone"}},
 		ConfigSchema: json.RawMessage(`{"type":"object","properties":{"secret":{"type":"string","x-secret":true},"name":{"type":"string"}}}`),
 	}
@@ -193,3 +199,22 @@ func (a *Adapter) MarkRead(_ context.Context, _, _ string, ids []string, _ strin
 }
 
 func (a *Adapter) Typing(context.Context, string, string, string) error { return nil }
+
+// KeysStatus, KeysVerify, KeysExport, KeysImport implement adapter.KeyManager.
+func (a *Adapter) KeysStatus(context.Context, string) (model.KeyStatus, error) {
+	return model.KeyStatus{DeviceID: "DEV", Fingerprint: "ab cd", CrossSigned: a.verified, Sessions: 1}, nil
+}
+
+func (a *Adapter) KeysVerify(_ context.Context, _, recoveryKey string) (model.KeyVerifyResult, error) {
+	if recoveryKey == "bad" {
+		return model.KeyVerifyResult{}, adapter.Errorf(adapter.ErrInvalidInput, "wrong recovery key")
+	}
+	a.verified = true
+	return model.KeyVerifyResult{CrossSigned: true, BackupVersion: "3", SessionsImported: 7}, nil
+}
+
+func (a *Adapter) KeysExport(_ context.Context, _, passphrase string) ([]byte, error) {
+	return []byte("EXPORT:" + passphrase), nil
+}
+
+func (a *Adapter) KeysImport(_ context.Context, _, _ string, _ []byte) (int, error) { return 2, nil }
