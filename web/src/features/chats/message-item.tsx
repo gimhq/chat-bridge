@@ -1,4 +1,5 @@
 import type { Message } from '@/shared/api/types'
+import { Link } from '@tanstack/react-router'
 import { CheckCheckIcon, CheckIcon, ForwardIcon, MapPinIcon, PhoneIcon, ReplyIcon, SmilePlusIcon, Trash2Icon, VideoIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { useMessageActions } from '@/shared/api/queries'
@@ -45,7 +46,11 @@ export function MessageItem({ accountId, message: m, replyTarget, showSender, ca
 
   return (
     <div className={cn('group flex max-w-[85%] flex-col gap-0.5', m.from_me ? 'items-end self-end' : 'items-start self-start')}>
-      {showSender && !m.from_me && <span className="px-1 text-xs text-muted-foreground">{senderName(m)}</span>}
+      {showSender && !m.from_me && (
+        <Link to="/accounts/$accountId/contacts/$userId" params={{ accountId, userId: m.sender.id }} className="px-1 text-xs text-muted-foreground underline-offset-4 hover:underline">
+          {senderName(m)}
+        </Link>
+      )}
       <div className={cn('flex items-center gap-1', m.from_me && 'flex-row-reverse')}>
         <div className={cn('rounded-2xl px-3 py-2 text-sm', m.from_me ? 'bg-primary text-primary-foreground' : 'bg-muted')}>
           {m.forwarded && (

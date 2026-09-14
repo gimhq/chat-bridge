@@ -132,6 +132,8 @@ func New(opts Options) http.Handler {
 
 			r.Get("/contacts", h.listContacts)
 			r.Get("/contacts/{user}", h.getContact)
+			r.Get("/contacts/{user}/chats", h.contactChats)
+			r.Get("/contacts/{user}/messages", h.contactMessages)
 			r.Patch("/contacts/{user}", h.patchContact)
 		})
 

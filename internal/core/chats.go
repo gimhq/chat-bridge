@@ -256,6 +256,43 @@ func (c *Core) GetContact(ctx context.Context, accountID, userID string) (model.
 	return ct, err
 }
 
+// ContactChats returns the direct chats with a contact and the other chats they are a member of.
+func (c *Core) ContactChats(ctx context.Context, accountID, userID string) ([]model.Chat, error) {
+	out, err := c.st.ContactChats(ctx, accountID, userID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, errNotFound("contact")
+	}
+	return out, err
+}
+
+// ContactMessages pages a contact's messages; scope is "direct" (default, the conversation with
+// them) or "all" (also their messages in other chats).
+func (c *Core) ContactMessages(ctx context.Context, accountID, userID, scope, cursor string, limit int) ([]model.Message, string, error) {
+	if scope == "" {
+		scope = "direct"
+	}
+	if scope != "direct" && scope != "all" {
+		return nil, "", errInvalid("scope must be direct or all")
+	}
+	if cursor != "" {
+		if _, _, err := store.DecodeMessageCursor(cursor); err != nil {
+			return nil, "", errInvalid("bad cursor")
+		}
+	}
+	rows, next, err := c.st.ContactMessages(ctx, accountID, userID, scope, cursor, limit)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, "", errNotFound("contact")
+	}
+	if err != nil {
+		return nil, "", err
+	}
+	out := make([]model.Message, len(rows))
+	for i := range rows {
+		out[i] = rows[i].Message
+	}
+	return out, next, nil
+}
+
 // ContactPatch is the body of PATCH /contacts/{user}.
 type ContactPatch struct {
 	Alias   *string `json:"alias"`

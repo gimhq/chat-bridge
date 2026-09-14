@@ -1,19 +1,19 @@
 import type { Contact } from '@/shared/api/types'
-import { useNavigate } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { BanIcon, EllipsisIcon, MessageSquareIcon, PencilIcon } from 'lucide-react'
 import { useState } from 'react'
 import { toast } from 'sonner'
-import { useAccount, useContacts, usePatchContact, useResolveChat } from '@/shared/api/queries'
+import { useAccount, useContacts, usePatchContact } from '@/shared/api/queries'
 import { Badge } from '@/shared/components/ui/badge'
 import { Button } from '@/shared/components/ui/button'
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/shared/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/shared/components/ui/dropdown-menu'
-import { Field, FieldDescription, FieldLabel } from '@/shared/components/ui/field'
 import { Input } from '@/shared/components/ui/input'
 import { Skeleton } from '@/shared/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/components/ui/table'
 import { displayContact } from '@/shared/lib/format'
 import { errorMessage } from '@/shared/lib/http'
+import { AliasDialog } from './alias-dialog'
+import { useOpenChat } from './use-open-chat'
 
 export function ContactsPage({ accountId }: { accountId: string }) {
   const [q, setQ] = useState('')
@@ -21,21 +21,10 @@ export function ContactsPage({ accountId }: { accountId: string }) {
   const account = useAccount(accountId)
   const contacts = useContacts(accountId, q)
   const patch = usePatchContact(accountId)
-  const resolve = useResolveChat(accountId)
-  const navigate = useNavigate()
   const caps = account.data?.capabilities ?? []
+  const openChat = useOpenChat(accountId, caps)
   const connected = account.data?.status === 'connected'
   const list = contacts.data?.pages.flatMap(p => p.contacts) ?? []
-
-  async function openChat(c: Contact) {
-    try {
-      const chatId = caps.includes('chat.resolve') ? (await resolve.mutateAsync(c.handle || c.id)).chat_id : c.id
-      void navigate({ to: '/accounts/$accountId/chats/$chatId', params: { accountId, chatId } })
-    }
-    catch (err) {
-      toast.error(errorMessage(err))
-    }
-  }
 
   return (
     <div className="flex flex-col gap-4 p-6">
@@ -58,7 +47,9 @@ export function ContactsPage({ accountId }: { accountId: string }) {
               {list.map(c => (
                 <TableRow key={c.id}>
                   <TableCell className="font-medium">
-                    {displayContact(c)}
+                    <Link to="/accounts/$accountId/contacts/$userId" params={{ accountId, userId: c.id }} className="underline-offset-4 hover:underline">
+                      {displayContact(c)}
+                    </Link>
                     {c.names.alias && c.names.profile && c.names.alias !== c.names.profile && (
                       <span className="ml-1 text-xs text-muted-foreground">
                         （
@@ -113,34 +104,5 @@ export function ContactsPage({ accountId }: { accountId: string }) {
       {contacts.hasNextPage && <Button variant="ghost" className="self-center" onClick={() => void contacts.fetchNextPage()}>加载更多</Button>}
       {editing && <AliasDialog key={editing.id} contact={editing} onClose={() => setEditing(undefined)} onSave={alias => patch.mutate({ user: editing.id, alias }, { onSuccess: () => setEditing(undefined), onError: e => toast.error(errorMessage(e)) })} />}
     </div>
-  )
-}
-
-function AliasDialog({ contact, onClose, onSave }: { contact: Contact, onClose: () => void, onSave: (alias: string) => void }) {
-  const [alias, setAlias] = useState(contact.names.alias ?? '')
-  return (
-    <Dialog open onOpenChange={o => !o && onClose()}>
-      <DialogContent className="sm:max-w-sm">
-        <form
-          className="flex flex-col gap-4"
-          onSubmit={(e) => {
-            e.preventDefault()
-            onSave(alias)
-          }}
-        >
-          <DialogHeader>
-            <DialogTitle>设置备注</DialogTitle>
-          </DialogHeader>
-          <Field>
-            <FieldLabel htmlFor="alias">备注名</FieldLabel>
-            <Input id="alias" autoFocus value={alias} onChange={e => setAlias(e.target.value)} />
-            <FieldDescription>保存在本地；留空则清除。</FieldDescription>
-          </Field>
-          <DialogFooter>
-            <Button type="submit">保存</Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   )
 }

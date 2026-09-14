@@ -31,7 +31,9 @@ type Store struct {
 	q  queryer
 }
 
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6}
+// migrations[i] brings a database from version i to i+1. Development started over from one base
+// schema; changes to a deployed database append a new entry.
+var migrations = []string{schemaV1}
 
 // Open opens (or creates) the database at path and applies pending migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -155,94 +157,7 @@ func boolInt(b bool) int {
 	return 0
 }
 
-const schemaV2 = `ALTER TABLE accounts ADD COLUMN adapter TEXT NOT NULL DEFAULT '';`
-
-// schemaV3 adds full-text search over message text. Trigram tokens make substring search work
-// for CJK text (no word boundaries); the index is external-content, so message rows stay the
-// single source of truth and the triggers keep it in step.
-const schemaV3 = `
-CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='seq', tokenize='trigram');
-CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
-  INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
-END;
-CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
-  INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.seq, old.text);
-END;
-CREATE TRIGGER messages_fts_au AFTER UPDATE OF text ON messages BEGIN
-  INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.seq, old.text);
-  INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
-END;
-INSERT INTO messages_fts(messages_fts) VALUES ('rebuild');
-`
-
-// schemaV4 adds requests (api.md §4.8): invites, join requests and calls waiting for the owner.
-// platform_key is the adapter's stable key, so re-emitted requests update the same row.
-const schemaV4 = `
-CREATE TABLE requests (
-  id           TEXT PRIMARY KEY,
-  account_id   TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  platform_key TEXT NOT NULL,
-  kind         TEXT NOT NULL,
-  state        TEXT NOT NULL,
-  from_id      TEXT,
-  from_name    TEXT,
-  chat_id      TEXT,
-  chat_name    TEXT,
-  chat_kind    TEXT,
-  message      TEXT,
-  call_kind    TEXT,
-  platform_ref TEXT,
-  raw          TEXT,
-  created_at   INTEGER NOT NULL,
-  expires_at   INTEGER,
-  answered_at  INTEGER,
-  updated_at   INTEGER NOT NULL,
-  UNIQUE (account_id, platform_key)
-);
-CREATE INDEX requests_open ON requests(account_id, state, created_at DESC);
-CREATE INDEX requests_expiry ON requests(expires_at) WHERE state = 'pending';
-`
-
-// schemaV5 adds persons (api.md §3.8): a bridge-local identity over contacts on several accounts.
-// contacts.phone_norm (digits only, at least 7) drives auto-linking and suggestions.
-const schemaV5 = `
-ALTER TABLE contacts ADD COLUMN phone_norm TEXT;
-UPDATE contacts SET phone_norm = CASE
-  WHEN length(replace(replace(replace(replace(replace(replace(COALESCE(phone,''),'+',''),' ',''),'-',''),'(',''),')',''),'.','')) >= 7
-  THEN replace(replace(replace(replace(replace(replace(phone,'+',''),' ',''),'-',''),'(',''),')',''),'.','') END;
-CREATE INDEX contacts_phone_norm ON contacts(phone_norm) WHERE phone_norm IS NOT NULL;
-CREATE TABLE persons (
-  id          TEXT PRIMARY KEY,
-  name        TEXT,
-  tags        TEXT NOT NULL DEFAULT '[]',
-  notes       TEXT,
-  created_at  INTEGER NOT NULL,
-  updated_at  INTEGER NOT NULL
-);
-CREATE TABLE person_links (
-  account_id  TEXT NOT NULL,
-  user_id     TEXT NOT NULL,
-  person_id   TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
-  source      TEXT NOT NULL,
-  linked_at   INTEGER NOT NULL,
-  PRIMARY KEY (account_id, user_id),
-  FOREIGN KEY (account_id, user_id) REFERENCES contacts(account_id, id) ON DELETE CASCADE
-);
-CREATE INDEX person_links_person ON person_links(person_id);
-CREATE TABLE person_unlinks (
-  account_id TEXT NOT NULL, user_id TEXT NOT NULL,
-  other_account_id TEXT NOT NULL, other_user_id TEXT NOT NULL,
-  PRIMARY KEY (account_id, user_id, other_account_id, other_user_id)
-);
-`
-
-// schemaV6 indexes user references so a re-ID (an adapter identity change) finds them without
-// scanning messages and members.
-const schemaV6 = `
-CREATE INDEX messages_sender ON messages(account_id, sender_id);
-CREATE INDEX chat_members_user ON chat_members(account_id, user_id);
-`
-
+// schemaV1 is the base schema (docs/storage.md §2).
 const schemaV1 = `
 CREATE TABLE accounts (
   id            TEXT PRIMARY KEY,
@@ -256,7 +171,8 @@ CREATE TABLE accounts (
   login_at      INTEGER,
   error         TEXT,
   created_at    INTEGER NOT NULL,
-  connected_at  INTEGER
+  connected_at  INTEGER,
+  adapter       TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE contacts (
@@ -273,9 +189,11 @@ CREATE TABLE contacts (
   bio           TEXT,
   raw           TEXT,
   updated_at    INTEGER NOT NULL,
+  phone_norm    TEXT,
   PRIMARY KEY (account_id, id)
 );
 CREATE INDEX contacts_phone ON contacts(phone) WHERE phone IS NOT NULL;
+CREATE INDEX contacts_phone_norm ON contacts(phone_norm) WHERE phone_norm IS NOT NULL;
 
 CREATE TABLE chats (
   account_id        TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -308,6 +226,8 @@ CREATE TABLE chat_members (
   PRIMARY KEY (account_id, chat_id, user_id),
   FOREIGN KEY (account_id, chat_id) REFERENCES chats(account_id, id) ON DELETE CASCADE
 );
+-- Finds a user's memberships when an identity changes (adapter identity events).
+CREATE INDEX chat_members_user ON chat_members(account_id, user_id);
 
 CREATE TABLE messages (
   seq           INTEGER PRIMARY KEY,
@@ -337,6 +257,22 @@ CREATE TABLE messages (
 CREATE INDEX messages_timeline ON messages(account_id, chat_id, ts DESC, seq DESC);
 CREATE INDEX messages_by_id ON messages(account_id, id);
 CREATE UNIQUE INDEX messages_client_id ON messages(account_id, chat_id, client_id) WHERE client_id IS NOT NULL;
+CREATE INDEX messages_sender ON messages(account_id, sender_id);
+
+-- Full-text search over message text. Trigram tokens make substring search work for CJK text (no
+-- word boundaries); the index is external-content, so message rows stay the single source of
+-- truth and the triggers keep it in step.
+CREATE VIRTUAL TABLE messages_fts USING fts5(text, content='messages', content_rowid='seq', tokenize='trigram');
+CREATE TRIGGER messages_fts_ai AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
+END;
+CREATE TRIGGER messages_fts_ad AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.seq, old.text);
+END;
+CREATE TRIGGER messages_fts_au AFTER UPDATE OF text ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, text) VALUES ('delete', old.seq, old.text);
+  INSERT INTO messages_fts(rowid, text) VALUES (new.seq, new.text);
+END;
 
 CREATE TABLE message_versions (
   message_seq INTEGER NOT NULL REFERENCES messages(seq) ON DELETE CASCADE,
@@ -409,5 +345,57 @@ CREATE TABLE webhooks (
   next_try    INTEGER,
   paused_at   INTEGER,
   created_at  INTEGER NOT NULL
+);
+
+-- Requests (api.md §4.8): invites, join requests and calls waiting for the owner. platform_key is
+-- the adapter's stable key, so re-emitted requests update the same row.
+CREATE TABLE requests (
+  id           TEXT PRIMARY KEY,
+  account_id   TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  platform_key TEXT NOT NULL,
+  kind         TEXT NOT NULL,
+  state        TEXT NOT NULL,
+  from_id      TEXT,
+  from_name    TEXT,
+  chat_id      TEXT,
+  chat_name    TEXT,
+  chat_kind    TEXT,
+  message      TEXT,
+  call_kind    TEXT,
+  platform_ref TEXT,
+  raw          TEXT,
+  created_at   INTEGER NOT NULL,
+  expires_at   INTEGER,
+  answered_at  INTEGER,
+  updated_at   INTEGER NOT NULL,
+  UNIQUE (account_id, platform_key)
+);
+CREATE INDEX requests_open ON requests(account_id, state, created_at DESC);
+CREATE INDEX requests_expiry ON requests(expires_at) WHERE state = 'pending';
+
+-- Persons (api.md §3.8): a bridge-local identity over contacts on several accounts.
+-- contacts.phone_norm (digits only, at least 7) drives auto-linking and suggestions.
+CREATE TABLE persons (
+  id          TEXT PRIMARY KEY,
+  name        TEXT,
+  tags        TEXT NOT NULL DEFAULT '[]',
+  notes       TEXT,
+  created_at  INTEGER NOT NULL,
+  updated_at  INTEGER NOT NULL
+);
+CREATE TABLE person_links (
+  account_id  TEXT NOT NULL,
+  user_id     TEXT NOT NULL,
+  person_id   TEXT NOT NULL REFERENCES persons(id) ON DELETE CASCADE,
+  source      TEXT NOT NULL,
+  linked_at   INTEGER NOT NULL,
+  PRIMARY KEY (account_id, user_id),
+  FOREIGN KEY (account_id, user_id) REFERENCES contacts(account_id, id) ON DELETE CASCADE
+);
+CREATE INDEX person_links_person ON person_links(person_id);
+CREATE TABLE person_unlinks (
+  account_id TEXT NOT NULL, user_id TEXT NOT NULL,
+  other_account_id TEXT NOT NULL, other_user_id TEXT NOT NULL,
+  PRIMARY KEY (account_id, user_id, other_account_id, other_user_id)
 );
 `

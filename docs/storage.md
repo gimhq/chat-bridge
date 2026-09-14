@@ -39,7 +39,8 @@ CREATE TABLE accounts (
   login_at      INTEGER,
   error         TEXT,                      -- json {code,message} or NULL
   created_at    INTEGER NOT NULL,
-  connected_at  INTEGER
+  connected_at  INTEGER,
+  adapter       TEXT NOT NULL DEFAULT ''     -- adapter instance serving the account ('' = not yet bound)
 );
 
 CREATE TABLE contacts (
@@ -57,8 +58,11 @@ CREATE TABLE contacts (
   bio           TEXT,
   raw           TEXT,
   updated_at    INTEGER NOT NULL,
+  phone_norm    TEXT,                      -- phone digits only, at least 7; drives person auto-link
   PRIMARY KEY (account_id, id)
 );
+CREATE INDEX contacts_phone ON contacts(phone) WHERE phone IS NOT NULL;
+CREATE INDEX contacts_phone_norm ON contacts(phone_norm) WHERE phone_norm IS NOT NULL;
 
 CREATE TABLE persons (
   id          TEXT PRIMARY KEY,             -- per_<ulid>
@@ -117,6 +121,7 @@ CREATE TABLE chat_members (
   PRIMARY KEY (account_id, chat_id, user_id),
   FOREIGN KEY (account_id, chat_id) REFERENCES chats(account_id, id) ON DELETE CASCADE
 );
+CREATE INDEX chat_members_user ON chat_members(account_id, user_id);  -- memberships of a user (identity changes)
 
 CREATE TABLE messages (
   seq           INTEGER PRIMARY KEY,        -- rowid; insertion order, tiebreaker and internal FK
@@ -144,6 +149,8 @@ CREATE TABLE messages (
   FOREIGN KEY (account_id, chat_id) REFERENCES chats(account_id, id) ON DELETE CASCADE
 );
 CREATE INDEX messages_timeline ON messages(account_id, chat_id, ts DESC, seq DESC);
+CREATE INDEX messages_by_id ON messages(account_id, id);
+CREATE INDEX messages_sender ON messages(account_id, sender_id);             -- a user's messages (identity changes)
 CREATE UNIQUE INDEX messages_client_id ON messages(account_id, chat_id, client_id) WHERE client_id IS NOT NULL;
 CREATE INDEX messages_ephemeral ON messages(json_extract(ephemeral,'$.expires_at')) WHERE ephemeral IS NOT NULL;
 
@@ -192,6 +199,7 @@ CREATE TABLE media (
   last_access   INTEGER
 );
 CREATE INDEX media_sha ON media(sha256);
+CREATE INDEX media_message ON media(message_seq);
 CREATE INDEX media_gc  ON media(state, last_access);
 
 CREATE TABLE raw_payloads (                  -- ?raw=1; separate so the hot table stays small
@@ -200,7 +208,7 @@ CREATE TABLE raw_payloads (                  -- ?raw=1; separate so the hot tabl
   created_at  INTEGER NOT NULL
 );
 
-CREATE TABLE requests (                      -- schema v4
+CREATE TABLE requests (
   id           TEXT PRIMARY KEY,             -- req_<uuid>
   account_id   TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   platform_key TEXT NOT NULL,                -- adapter's stable key; re-emits update the same row
@@ -361,18 +369,18 @@ Webhook delivery reads `events` by `cursor`; a webhook paused for longer than
 
 ## 8. Migrations
 
-`schema_version` holds one integer. Migrations are numbered SQL files embedded in the binary,
-applied in order inside a transaction at startup; the process refuses to start on a database newer
-than it knows. No down migrations. Adapter-private databases are versioned by their own libraries.
+`schema_version` holds one integer. Migrations are numbered SQL strings embedded in the binary
+(`internal/store/store.go`), applied in order inside a transaction at startup; the process refuses
+to start on a database newer than it knows. No down migrations. Adapter-private databases are
+versioned by their own libraries.
+
+While chat-bridge is in development there is no data to carry forward: the schema was reset to a
+single base version, and a database created by an earlier build (version above 1) is refused;
+delete the data directory. Once a database is deployed, schema changes append migrations again.
 
 | Version | Change |
 |---|---|
-| 1 | initial schema |
-| 2 | `accounts.adapter` (instance binding) |
-| 3 | `messages_fts` (trigram FTS5, external content) with its triggers, rebuilt over existing rows |
-| 4 | `requests` (invites, join requests, calls) |
-| 5 | `persons`, `person_links`, `person_unlinks`; `contacts.phone_norm` (digits only, at least 7, indexed) backfilled from `phone` |
-| 6 | indexes `messages(account_id, sender_id)` and `chat_members(account_id, user_id)` so an identity change (adapter `identity` event, `adapter-protocol.md` §5.3) finds the rows to re-ID without scanning |
+| 1 | base schema (§2): accounts with instance binding, contacts with `phone_norm`, chats, members, messages with trigram FTS5, reactions, receipts, media, raw payloads, events, webhooks, requests, persons; indexes on senders and memberships for identity changes |
 
 ## 9. Sizing
 

@@ -41,3 +41,5 @@ Each task is a single line linking to its detail file. All detailed information 
 - [~] [**20260913-2243-telegram-default-app Built-in Telegram application credentials**](20260913-2243-telegram-default-app.md) `P2`
 - [x] [**20260913-2243-whatsapp-lid-and-new-types WhatsApp: resolve LIDs to phone numbers; map newer message types**](20260913-2243-whatsapp-lid-and-new-types.md) `P1`
 - [x] [**20260913-2319-telegram-bridgev2-connector Host mautrix-telegram's bridgev2 connector alongside the gotd adapter**](20260913-2319-telegram-bridgev2-connector.md) `P2`
+- [x] [**20260914-0206-contact-detail Contact detail page: everything about one contact**](20260914-0206-contact-detail.md) `P1`
+- [x] [**20260914-0209-schema-reset Reset the database schema to one base version**](20260914-0209-schema-reset.md) `P2`

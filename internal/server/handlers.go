@@ -546,6 +546,25 @@ func (h *handlers) getContact(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, c)
 }
 
+func (h *handlers) contactChats(w http.ResponseWriter, r *http.Request) {
+	out, err := h.core.ContactChats(r.Context(), param(r, "account"), param(r, "user"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"chats": out})
+}
+
+func (h *handlers) contactMessages(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	out, next, err := h.core.ContactMessages(r.Context(), param(r, "account"), param(r, "user"), q.Get("scope"), q.Get("cursor"), parseLimit(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeList(w, "messages", out, next)
+}
+
 func (h *handlers) patchContact(w http.ResponseWriter, r *http.Request) {
 	var req core.ContactPatch
 	if !decodeJSON(w, r, &req) {
@@ -687,7 +706,7 @@ func (h *handlers) personMessages(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) listRequests(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	out, next, err := h.core.ListRequests(r.Context(), param(r, "account"), store.RequestFilter{Kind: q.Get("kind"), State: q.Get("state")}, q.Get("cursor"), parseLimit(r))
+	out, next, err := h.core.ListRequests(r.Context(), param(r, "account"), store.RequestFilter{Kind: q.Get("kind"), State: q.Get("state"), From: q.Get("from")}, q.Get("cursor"), parseLimit(r))
 	if err != nil {
 		writeErr(w, err)
 		return

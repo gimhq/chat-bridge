@@ -1,15 +1,20 @@
 import type { ReactElement } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createMemoryHistory, createRootRoute, createRouter, RouterContextProvider } from '@tanstack/react-router'
 import { render } from '@testing-library/react'
 import { TooltipProvider } from '@/shared/components/ui/tooltip'
 
+/** Renders ui with a query client and a bare router, so components with Links render synchronously. */
 export function renderWithClient(ui: ReactElement) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  const router = createRouter({ routeTree: createRootRoute(), history: createMemoryHistory() })
   return {
     client,
     ...render(
       <QueryClientProvider client={client}>
-        <TooltipProvider>{ui}</TooltipProvider>
+        <RouterContextProvider router={router}>
+          <TooltipProvider>{ui}</TooltipProvider>
+        </RouterContextProvider>
       </QueryClientProvider>,
     ),
   }

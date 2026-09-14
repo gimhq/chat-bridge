@@ -55,6 +55,11 @@ export function ChatView({ accountId, chatId }: { accountId: string, chatId: str
                 查看此人
               </Link>
             )}
+            {c?.kind === 'direct' && (
+              <Link to="/accounts/$accountId/contacts/$userId" params={{ accountId, userId: chatId }} className="text-xs text-muted-foreground underline-offset-4 hover:underline">
+                查看联系人
+              </Link>
+            )}
           </div>
           <p className="truncate text-xs text-muted-foreground">
             {chatId}

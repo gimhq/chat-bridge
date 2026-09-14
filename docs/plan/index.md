@@ -36,3 +36,4 @@ Each plan is a single line linking to its detail file. All detailed information 
 - [x] [**20260913-1903-web-ui-and-requests Embedded web UI; requests (invites, calls)**](20260913-1903-web-ui-and-requests.md) `2026-09-13`
 - [x] [**20260913-2243-whatsapp-lid-and-new-types WhatsApp: one identity per user (LID); newer message types**](20260913-2243-whatsapp-lid-and-new-types.md) `2026-09-13`
 - [x] [**20260913-2319-telegram-bridgev2-connector Host mautrix-telegram's bridgev2 connector alongside the gotd adapter**](20260913-2319-telegram-bridgev2-connector.md) `2026-09-13`
+- [x] [**20260914-0206-contact-detail Contact detail page: everything about one contact**](20260914-0206-contact-detail.md) `2026-09-14`

@@ -19,10 +19,11 @@ import { Route as PersonsIndexRouteImport } from './routes/persons/index'
 import { Route as PersonsPersonIdRouteImport } from './routes/persons/$personId'
 import { Route as AccountsAccountIdIndexRouteImport } from './routes/accounts/$accountId/index'
 import { Route as AccountsAccountIdChatsRouteImport } from './routes/accounts/$accountId/chats'
-import { Route as AccountsAccountIdContactsRouteImport } from './routes/accounts/$accountId/contacts'
 import { Route as AccountsAccountIdRequestsRouteImport } from './routes/accounts/$accountId/requests'
 import { Route as AccountsAccountIdChatsIndexRouteImport } from './routes/accounts/$accountId/chats/index'
 import { Route as AccountsAccountIdChatsChatIdRouteImport } from './routes/accounts/$accountId/chats/$chatId'
+import { Route as AccountsAccountIdContactsIndexRouteImport } from './routes/accounts/$accountId/contacts/index'
+import { Route as AccountsAccountIdContactsUserIdRouteImport } from './routes/accounts/$accountId/contacts/$userId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -74,12 +75,6 @@ const AccountsAccountIdChatsRoute = AccountsAccountIdChatsRouteImport.update({
   path: '/chats',
   getParentRoute: () => AccountsAccountIdRoute,
 } as any)
-const AccountsAccountIdContactsRoute =
-  AccountsAccountIdContactsRouteImport.update({
-    id: '/contacts',
-    path: '/contacts',
-    getParentRoute: () => AccountsAccountIdRoute,
-  } as any)
 const AccountsAccountIdRequestsRoute =
   AccountsAccountIdRequestsRouteImport.update({
     id: '/requests',
@@ -98,6 +93,18 @@ const AccountsAccountIdChatsChatIdRoute =
     path: '/$chatId',
     getParentRoute: () => AccountsAccountIdChatsRoute,
   } as any)
+const AccountsAccountIdContactsIndexRoute =
+  AccountsAccountIdContactsIndexRouteImport.update({
+    id: '/contacts/',
+    path: '/contacts/',
+    getParentRoute: () => AccountsAccountIdRoute,
+  } as any)
+const AccountsAccountIdContactsUserIdRoute =
+  AccountsAccountIdContactsUserIdRouteImport.update({
+    id: '/contacts/$userId',
+    path: '/contacts/$userId',
+    getParentRoute: () => AccountsAccountIdRoute,
+  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -109,11 +116,12 @@ export interface FileRoutesByFullPath {
   '/accounts/': typeof AccountsIndexRoute
   '/persons/': typeof PersonsIndexRoute
   '/accounts/$accountId/chats': typeof AccountsAccountIdChatsRouteWithChildren
-  '/accounts/$accountId/contacts': typeof AccountsAccountIdContactsRoute
   '/accounts/$accountId/requests': typeof AccountsAccountIdRequestsRoute
   '/accounts/$accountId/': typeof AccountsAccountIdIndexRoute
   '/accounts/$accountId/chats/$chatId': typeof AccountsAccountIdChatsChatIdRoute
+  '/accounts/$accountId/contacts/$userId': typeof AccountsAccountIdContactsUserIdRoute
   '/accounts/$accountId/chats/': typeof AccountsAccountIdChatsIndexRoute
+  '/accounts/$accountId/contacts/': typeof AccountsAccountIdContactsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -123,11 +131,12 @@ export interface FileRoutesByTo {
   '/persons/$personId': typeof PersonsPersonIdRoute
   '/accounts': typeof AccountsIndexRoute
   '/persons': typeof PersonsIndexRoute
-  '/accounts/$accountId/contacts': typeof AccountsAccountIdContactsRoute
   '/accounts/$accountId/requests': typeof AccountsAccountIdRequestsRoute
   '/accounts/$accountId': typeof AccountsAccountIdIndexRoute
   '/accounts/$accountId/chats/$chatId': typeof AccountsAccountIdChatsChatIdRoute
+  '/accounts/$accountId/contacts/$userId': typeof AccountsAccountIdContactsUserIdRoute
   '/accounts/$accountId/chats': typeof AccountsAccountIdChatsIndexRoute
+  '/accounts/$accountId/contacts': typeof AccountsAccountIdContactsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -140,11 +149,12 @@ export interface FileRoutesById {
   '/accounts/': typeof AccountsIndexRoute
   '/persons/': typeof PersonsIndexRoute
   '/accounts/$accountId/chats': typeof AccountsAccountIdChatsRouteWithChildren
-  '/accounts/$accountId/contacts': typeof AccountsAccountIdContactsRoute
   '/accounts/$accountId/requests': typeof AccountsAccountIdRequestsRoute
   '/accounts/$accountId/': typeof AccountsAccountIdIndexRoute
   '/accounts/$accountId/chats/$chatId': typeof AccountsAccountIdChatsChatIdRoute
+  '/accounts/$accountId/contacts/$userId': typeof AccountsAccountIdContactsUserIdRoute
   '/accounts/$accountId/chats/': typeof AccountsAccountIdChatsIndexRoute
+  '/accounts/$accountId/contacts/': typeof AccountsAccountIdContactsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -158,11 +168,12 @@ export interface FileRouteTypes {
     | '/accounts/'
     | '/persons/'
     | '/accounts/$accountId/chats'
-    | '/accounts/$accountId/contacts'
     | '/accounts/$accountId/requests'
     | '/accounts/$accountId/'
     | '/accounts/$accountId/chats/$chatId'
+    | '/accounts/$accountId/contacts/$userId'
     | '/accounts/$accountId/chats/'
+    | '/accounts/$accountId/contacts/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -172,11 +183,12 @@ export interface FileRouteTypes {
     | '/persons/$personId'
     | '/accounts'
     | '/persons'
-    | '/accounts/$accountId/contacts'
     | '/accounts/$accountId/requests'
     | '/accounts/$accountId'
     | '/accounts/$accountId/chats/$chatId'
+    | '/accounts/$accountId/contacts/$userId'
     | '/accounts/$accountId/chats'
+    | '/accounts/$accountId/contacts'
   id:
     | '__root__'
     | '/'
@@ -188,11 +200,12 @@ export interface FileRouteTypes {
     | '/accounts/'
     | '/persons/'
     | '/accounts/$accountId/chats'
-    | '/accounts/$accountId/contacts'
     | '/accounts/$accountId/requests'
     | '/accounts/$accountId/'
     | '/accounts/$accountId/chats/$chatId'
+    | '/accounts/$accountId/contacts/$userId'
     | '/accounts/$accountId/chats/'
+    | '/accounts/$accountId/contacts/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -278,13 +291,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountsAccountIdChatsRouteImport
       parentRoute: typeof AccountsAccountIdRoute
     }
-    '/accounts/$accountId/contacts': {
-      id: '/accounts/$accountId/contacts'
-      path: '/contacts'
-      fullPath: '/accounts/$accountId/contacts'
-      preLoaderRoute: typeof AccountsAccountIdContactsRouteImport
-      parentRoute: typeof AccountsAccountIdRoute
-    }
     '/accounts/$accountId/requests': {
       id: '/accounts/$accountId/requests'
       path: '/requests'
@@ -305,6 +311,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/accounts/$accountId/chats/$chatId'
       preLoaderRoute: typeof AccountsAccountIdChatsChatIdRouteImport
       parentRoute: typeof AccountsAccountIdChatsRoute
+    }
+    '/accounts/$accountId/contacts/': {
+      id: '/accounts/$accountId/contacts/'
+      path: '/contacts'
+      fullPath: '/accounts/$accountId/contacts/'
+      preLoaderRoute: typeof AccountsAccountIdContactsIndexRouteImport
+      parentRoute: typeof AccountsAccountIdRoute
+    }
+    '/accounts/$accountId/contacts/$userId': {
+      id: '/accounts/$accountId/contacts/$userId'
+      path: '/contacts/$userId'
+      fullPath: '/accounts/$accountId/contacts/$userId'
+      preLoaderRoute: typeof AccountsAccountIdContactsUserIdRouteImport
+      parentRoute: typeof AccountsAccountIdRoute
     }
   }
 }
@@ -327,16 +347,18 @@ const AccountsAccountIdChatsRouteWithChildren =
 
 interface AccountsAccountIdRouteChildren {
   AccountsAccountIdChatsRoute: typeof AccountsAccountIdChatsRouteWithChildren
-  AccountsAccountIdContactsRoute: typeof AccountsAccountIdContactsRoute
   AccountsAccountIdRequestsRoute: typeof AccountsAccountIdRequestsRoute
   AccountsAccountIdIndexRoute: typeof AccountsAccountIdIndexRoute
+  AccountsAccountIdContactsUserIdRoute: typeof AccountsAccountIdContactsUserIdRoute
+  AccountsAccountIdContactsIndexRoute: typeof AccountsAccountIdContactsIndexRoute
 }
 
 const AccountsAccountIdRouteChildren: AccountsAccountIdRouteChildren = {
   AccountsAccountIdChatsRoute: AccountsAccountIdChatsRouteWithChildren,
-  AccountsAccountIdContactsRoute: AccountsAccountIdContactsRoute,
   AccountsAccountIdRequestsRoute: AccountsAccountIdRequestsRoute,
   AccountsAccountIdIndexRoute: AccountsAccountIdIndexRoute,
+  AccountsAccountIdContactsUserIdRoute: AccountsAccountIdContactsUserIdRoute,
+  AccountsAccountIdContactsIndexRoute: AccountsAccountIdContactsIndexRoute,
 }
 
 const AccountsAccountIdRouteWithChildren =

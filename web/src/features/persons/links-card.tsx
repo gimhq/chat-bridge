@@ -1,4 +1,5 @@
 import type { Person } from '@/shared/api/types'
+import { Link } from '@tanstack/react-router'
 import { UnlinkIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { usePersonActions } from '@/shared/api/queries'
@@ -24,7 +25,9 @@ export function LinksCard({ person }: { person: Person }) {
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <Badge variant="secondary">{l.platform || l.account_id}</Badge>
-                  <span className="truncate text-sm font-medium">{l.name || l.user_id}</span>
+                  <Link to="/accounts/$accountId/contacts/$userId" params={{ accountId: l.account_id, userId: l.user_id }} className="truncate text-sm font-medium underline-offset-4 hover:underline">
+                    {l.name || l.user_id}
+                  </Link>
                 </div>
                 <p className="truncate text-xs text-muted-foreground">
                   {[l.account_id, l.phone || l.handle, sourceLabels[l.source]].filter(Boolean).join(' · ')}

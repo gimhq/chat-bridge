@@ -40,6 +40,7 @@ const (
 type RequestFilter struct {
 	Kind  string
 	State string
+	From  string // sender user id
 }
 
 // UpsertRequest inserts a request or merges a re-emitted one (same account and platform key).
@@ -254,6 +255,10 @@ func (s *Store) ListRequests(ctx context.Context, accountID string, f RequestFil
 	if f.State != "" {
 		where += ` AND state = ?`
 		args = append(args, f.State)
+	}
+	if f.From != "" {
+		where += ` AND from_id = ?`
+		args = append(args, f.From)
 	}
 	if cursor != "" {
 		ts, rowid, err := DecodeMessageCursor(cursor)

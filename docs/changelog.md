@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-09-14 02:45 [progress]
+
+Task `20260914-0206-contact-detail` (plan of the same id): a detail page for every contact.
+
+- API: `GET /accounts/{a}/contacts/{user}/chats` (direct chats with them and the chats they are a current member of), `GET /accounts/{a}/contacts/{user}/messages?scope=direct|all` (the conversation, or also their messages in groups), `from=` on `GET /accounts/{a}/requests`; `api.md` §4.6 and §4.8
+- UI `/accounts/{a}/contacts/{user}`: profile (all names, phone, handle, email, bio, id), cross-platform card (the person and its other identities, or link to a person), shared chats, requests from them, message timeline with 私聊 / 含群聊; actions message, alias, view person, block
+- Entry points: contact names in the contacts table, 查看联系人 in direct chat headers, sender names in messages, linked identities on the person page
+- Tests: store, core and server for the new endpoints; Vitest for the detail page; Playwright smoke 7/7 against a scripted remote adapter
+
+## 2026-09-14 02:10 [progress]
+
+Task `20260914-0209-schema-reset`: the database schema starts over from one base version.
+
+- `internal/store` keeps a single migration, the final schema of former versions 1-6 (accounts with `adapter`, contacts with `phone_norm`, trigram FTS, requests, persons, sender and membership indexes) without the backfills; databases created by earlier builds report a newer schema and must be deleted
+- `storage.md` §2 DDL completed (missing `accounts.adapter`, `contacts.phone_norm`, indexes) and §8 describes the reset
+
+Task `20260914-0206-contact-detail` proposed: a contact detail page with shared chats, messages across chats and requests.
+
 ## 2026-09-14 01:45 [progress]
 
 Task `20260913-2319-telegram-bridgev2-connector` (plan of the same id): mautrix-telegram's bridgev2 connector runs as a second Telegram instance next to the gotd adapter.

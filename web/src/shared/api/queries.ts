@@ -34,6 +34,12 @@ export const qk = {
   messages: (a: string, c: string) => ['messages', a, c] as const,
   search: (a: string) => ['search', a] as const,
   contacts: (a: string) => ['contacts', a] as const,
+  // Contact views nest under the keys events already refresh (contacts, chats, requests); the
+  // timeline has its own prefix because message events name a chat.
+  contact: (a: string, u: string) => ['contacts', a, 'detail', u] as const,
+  contactChats: (a: string, u: string) => ['chats', a, 'contact', u] as const,
+  contactTimelines: (a: string) => ['contact-messages', a] as const,
+  contactMessages: (a: string, u: string) => ['contact-messages', a, u] as const,
   requests: (a: string) => ['requests', a] as const,
   webhooks: ['webhooks'] as const,
   persons: ['persons'] as const,
@@ -275,6 +281,34 @@ export function usePatchContact(a: string) {
   })
 }
 
+export function useContact(a: string, user: string) {
+  return useQuery({ queryKey: qk.contact(a, user), queryFn: () => api<Contact>(`${acc(a)}/contacts/${seg(user)}`) })
+}
+
+/** Direct chats with the contact and the chats they are a member of. */
+export function useContactChats(a: string, user: string) {
+  return useQuery({
+    queryKey: qk.contactChats(a, user),
+    queryFn: async () => (await api<{ chats: Chat[] }>(`${acc(a)}/contacts/${seg(user)}/chats`)).chats,
+  })
+}
+
+export function useContactMessages(a: string, user: string, scope: 'direct' | 'all') {
+  return useInfiniteQuery({
+    queryKey: [...qk.contactMessages(a, user), scope],
+    queryFn: ({ pageParam }) => api<Page<'messages', Message>>(`${acc(a)}/contacts/${seg(user)}/messages`, { query: { scope, limit: 50, cursor: pageParam } }),
+    initialPageParam: '',
+    getNextPageParam: last => last.next_cursor || undefined,
+  })
+}
+
+export function useContactRequests(a: string, user: string) {
+  return useQuery({
+    queryKey: [...qk.requests(a), 'from', user],
+    queryFn: async () => (await api<Page<'requests', ChatRequest>>(`${acc(a)}/requests`, { query: { from: user, limit: 50 } })).requests,
+  })
+}
+
 // --- requests ---
 
 export function useRequests(a: string, state?: RequestState) {
@@ -347,7 +381,7 @@ export function invalidationsFor(e: ApiEvent): (readonly unknown[])[] {
     case 'message.deleted':
     case 'message.reaction':
     case 'message.receipt':
-      return [qk.messages(a, d.chat_id ?? ''), qk.chats(a)]
+      return [qk.messages(a, d.chat_id ?? ''), qk.chats(a), qk.contactTimelines(a)]
     case 'chat.new':
     case 'chat.updated':
       return [qk.chats(a), qk.chat(a, d.id ?? '')]

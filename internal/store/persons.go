@@ -426,6 +426,11 @@ func (s *Store) PersonChats(ctx context.Context, id string) ([]model.Chat, error
 	if err != nil {
 		return nil, fmt.Errorf("person chats: %w", err)
 	}
+	return s.chatsWithLast(ctx, rows)
+}
+
+// chatsWithLast scans chatCols rows and fills each chat's last message and direct-chat name.
+func (s *Store) chatsWithLast(ctx context.Context, rows *sql.Rows) ([]model.Chat, error) {
 	out := []model.Chat{}
 	var seqs []int64
 	for rows.Next() {
@@ -460,6 +465,11 @@ func (s *Store) PersonMessages(ctx context.Context, id, scope, cursor string, li
 		where = `(` + where + ` OR EXISTS (SELECT 1 FROM person_links pl WHERE pl.person_id = ? AND pl.account_id = m.account_id AND pl.user_id = m.sender_id))`
 		args = append(args, id)
 	}
+	return s.pageMessages(ctx, "person messages", where, args, cursor, limit)
+}
+
+// pageMessages pages messages m matching where, newest first, with the message cursor.
+func (s *Store) pageMessages(ctx context.Context, what, where string, args []any, cursor string, limit int) ([]Stored, string, error) {
 	if cursor != "" {
 		ts, seq, err := DecodeMessageCursor(cursor)
 		if err != nil {
@@ -471,7 +481,7 @@ func (s *Store) PersonMessages(ctx context.Context, id, scope, cursor string, li
 	args = append(args, limit+1)
 	rows, err := s.q.QueryContext(ctx, `SELECT `+messageColsM+` FROM messages m WHERE `+where+` ORDER BY m.ts DESC, m.seq DESC LIMIT ?`, args...)
 	if err != nil {
-		return nil, "", fmt.Errorf("person messages: %w", err)
+		return nil, "", fmt.Errorf("%s: %w", what, err)
 	}
 	defer func() { _ = rows.Close() }()
 	out := make([]Stored, 0, limit)

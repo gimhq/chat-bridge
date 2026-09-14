@@ -5,8 +5,8 @@ const ev = (type: string, data: unknown, account_id = 'a1'): ApiEvent => ({ id: 
 
 describe('invalidationsFor', () => {
   it('maps events to the queries they make stale', () => {
-    expect(invalidationsFor(ev('message.new', { chat_id: 'c1' }))).toEqual([qk.messages('a1', 'c1'), qk.chats('a1')])
-    expect(invalidationsFor(ev('message.reaction', { chat_id: 'c2' }))).toEqual([qk.messages('a1', 'c2'), qk.chats('a1')])
+    expect(invalidationsFor(ev('message.new', { chat_id: 'c1' }))).toEqual([qk.messages('a1', 'c1'), qk.chats('a1'), qk.contactTimelines('a1')])
+    expect(invalidationsFor(ev('message.reaction', { chat_id: 'c2' }))).toEqual([qk.messages('a1', 'c2'), qk.chats('a1'), qk.contactTimelines('a1')])
     expect(invalidationsFor(ev('chat.updated', { id: 'c1' }))).toEqual([qk.chats('a1'), qk.chat('a1', 'c1')])
     expect(invalidationsFor(ev('contact.updated', {}))).toEqual([qk.contacts('a1')])
     expect(invalidationsFor(ev('account.status', {}))).toEqual([qk.accounts, qk.account('a1'), qk.status])

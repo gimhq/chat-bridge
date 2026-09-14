@@ -515,6 +515,8 @@ Media IDs are global (not account-scoped) because the consumer already got them 
 | GET | `/accounts/{a}/contacts` | `cursor, limit, q?` | `{contacts: [Contact], next_cursor}` |
 | GET | `/accounts/{a}/contacts/{user}` | | Contact |
 | PATCH | `/accounts/{a}/contacts/{user}` | `{alias?, blocked?}` | Contact; `alias` needs `contact.alias` |
+| GET | `/accounts/{a}/contacts/{user}/chats` | | `{chats: [Chat]}` — the direct chats with the user (chat id is the user, or the user is a member of a direct room) and the chats they are a current member of, most recent first, with `last_message` |
+| GET | `/accounts/{a}/contacts/{user}/messages` | `cursor, limit, scope=direct\|all` | `{messages, next_cursor}` newest first; `direct` (default) = the whole conversation in their direct chats, `all` = also their own messages in other chats |
 
 ### 4.7a Keys (end-to-end encryption)
 
@@ -566,7 +568,7 @@ an answer.
 
 | Method | Path | Body / Query | Result |
 |---|---|---|---|
-| GET | `/accounts/{a}/requests` | `cursor, limit, kind?, state?` | `{requests: [Request], next_cursor}` |
+| GET | `/accounts/{a}/requests` | `cursor, limit, kind?, state?, from?` | `{requests: [Request], next_cursor}`; `from` = sender user id |
 | GET | `/accounts/{a}/requests/{id}` | | Request |
 | POST | `/accounts/{a}/requests/{id}/accept` | `{reason?}` | Request `accepted`; `409` unless `pending`, `400` for calls |
 | POST | `/accounts/{a}/requests/{id}/reject` | `{reason?}` | Request `rejected`; `409` unless `pending`. For a call this hangs up on every device of the account, which is why calls do not offer it |
