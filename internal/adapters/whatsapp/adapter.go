@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"go.mau.fi/whatsmeow"
@@ -247,6 +248,11 @@ type account struct {
 	login     base.Login
 	container *sqlstore.Container
 	cli       *whatsmeow.Client
+
+	// Phone JIDs already reported as moved to their LID, and identity events waiting for emit.
+	mu      sync.Mutex
+	known   map[string]bool
+	pending []adapter.Event
 }
 
 func (acc *account) attach(device *wastore.Device) {
@@ -345,8 +351,12 @@ func (acc *account) selfContact() *model.Contact {
 		return nil
 	}
 	phone := "+" + id.User
+	self := id.ToNonAD()
+	if lid := acc.cli.Store.GetLID().ToNonAD(); !lid.IsEmpty() {
+		self = lid
+	}
 	return &model.Contact{
-		ID: id.ToNonAD().String(), Handle: phone, Phone: phone, Names: model.Names{Profile: acc.cli.Store.PushName},
+		ID: self.String(), Handle: phone, Phone: phone, Names: model.Names{Profile: acc.cli.Store.PushName},
 		IsSelf: true, IsContact: true,
 	}
 }

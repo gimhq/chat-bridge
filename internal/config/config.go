@@ -53,6 +53,9 @@ type Config struct {
 		Telegram struct {
 			APIID   int    `koanf:"api_id"`
 			APIHash string `koanf:"api_hash"`
+			// Bridgev2 registers mautrix-telegram's connector as a second Telegram instance
+			// (`bridgev2`) in builds with `-tags tgbridge`.
+			Bridgev2 bool `koanf:"bridgev2"`
 		} `koanf:"telegram"`
 	} `koanf:"adapters"`
 

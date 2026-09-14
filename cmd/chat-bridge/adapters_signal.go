@@ -7,9 +7,12 @@ import (
 
 	"gimhq/chat-bridge/internal/adapter"
 	"gimhq/chat-bridge/internal/adapters/signal"
+	"gimhq/chat-bridge/internal/config"
 )
 
-// extraAdapters adds the cgo-backed Signal adapter when built with `-tags signal`.
-func extraAdapters(log *slog.Logger) []adapter.Adapter {
-	return []adapter.Adapter{signal.New(log.With("adapter", "signal"))}
+// `-tags signal` adds the cgo-backed Signal adapter.
+func init() {
+	extraAdapters = append(extraAdapters, func(log *slog.Logger, _ config.Config) adapter.Adapter {
+		return signal.New(log.With("adapter", "signal"))
+	})
 }

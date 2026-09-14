@@ -60,7 +60,11 @@ func (c *Core) GetChat(ctx context.Context, accountID, chatID string) (model.Cha
 		}
 		ch.Participants = members
 	}
-	return ch, nil
+	named := []model.Chat{ch}
+	if err := c.st.NameDirectChats(ctx, named); err != nil {
+		return model.Chat{}, err
+	}
+	return named[0], nil
 }
 
 func (c *Core) storeChatInfo(ctx context.Context, accountID string, fresh model.Chat, isNew bool) error {

@@ -60,6 +60,7 @@ func (c *Core) syncContacts(accountID string) {
 	if err != nil {
 		return
 	}
+	c.reconcileIdentities(ctx, accountID, ad)
 	contacts, err := ad.ListContacts(ctx, accountID)
 	if err != nil {
 		c.log.Warn("list contacts", "account", accountID, "err", err)
@@ -242,6 +243,8 @@ func (c *Core) ingest(ctx context.Context, tx *store.Store, accountID string, ev
 			return nil, err
 		}
 		return nil, c.autoLink(ctx, tx, accountID, ev.Contact.ID)
+	case adapter.EvIdentity:
+		return nil, c.reID(ctx, tx, accountID, ev.UserID, ev.NewID)
 	case adapter.EvTyping:
 		return nil, emit(ctx, tx, accountID, model.EvChatTyping, map[string]any{"chat_id": ev.ChatID, "user_id": ev.UserID, "state": ev.State})
 	case adapter.EvPresence:
@@ -346,11 +349,15 @@ func (c *Core) emitChat(ctx context.Context, tx *store.Store, accountID, chatID 
 	if err != nil {
 		return err
 	}
+	named := []model.Chat{ch}
+	if err := tx.NameDirectChats(ctx, named); err != nil {
+		return err
+	}
 	typ := model.EvChatUpdated
 	if created {
 		typ = model.EvChatNew
 	}
-	return emit(ctx, tx, accountID, typ, ch)
+	return emit(ctx, tx, accountID, typ, named[0])
 }
 
 func orNow(t time.Time) time.Time {

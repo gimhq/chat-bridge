@@ -227,7 +227,34 @@ func (s *Store) ListChats(ctx context.Context, accountID string, f ChatFilter, c
 			out[i].LastMessage = &m.Message
 		}
 	}
+	if err := s.NameDirectChats(ctx, out); err != nil {
+		return nil, "", err
+	}
 	return out, next, nil
+}
+
+// NameDirectChats gives unnamed direct chats their counterpart's contact name. It only fills the
+// returned values: the name follows the contact and is never written to the chat row.
+func (s *Store) NameDirectChats(ctx context.Context, chats []model.Chat) error {
+	byAccount := map[string][]string{}
+	for _, c := range chats {
+		if c.Kind == model.ChatDirect && c.Name == "" {
+			byAccount[c.AccountID] = append(byAccount[c.AccountID], c.ID)
+		}
+	}
+	for account, ids := range byAccount {
+		names, err := s.ContactNames(ctx, account, ids)
+		if err != nil {
+			return err
+		}
+		for i := range chats {
+			c := &chats[i]
+			if n := names[c.ID]; c.AccountID == account && c.Kind == model.ChatDirect && c.Name == "" && n != c.ID {
+				c.Name = n
+			}
+		}
+	}
+	return nil
 }
 
 // UpsertMember records membership; Left marks departure but keeps the row.

@@ -163,6 +163,7 @@ All take `{"account_id": "…", ...}`. Errors use JSON-RPC `error.code`:
 | `keys.export` | `{account_id, passphrase}` | `{data}` (base64 of the key file) | `keys.manage` |
 | `keys.import` | `{account_id, passphrase, data}` (base64) | `{sessions_imported}` | `keys.manage` |
 | `request.answer` | `{account_id, request_key, kind, chat_id, from_id, platform_ref, action: "accept"\|"reject", reason?}` | `{}` — `request_key` and `platform_ref` are what the adapter emitted | (none; the core offers the actions the request kind allows) |
+| `identity.resolve` | `{account_id, ids: [string]}` — every user and direct-chat id the core stores for the account | `{ids: {old: new}}` — only ids the platform now addresses differently; called after each `connected` status, the core re-IDs the result | (none; `-32601` means nothing changes) |
 
 `message.send` content arrives exactly as the consumer posted it (§3.5 of the API spec), with
 each attachment already expanded to `{media_id, mime, size, file_name, sha256}`; the adapter
@@ -203,6 +204,7 @@ on one connection is preserved per account.
   {"kind": "contact", "contact": { Contact }},
   {"kind": "request", "request": {"key": "call:42", "kind": "call", "from": {"id": "…", "name": "…"}, "chat": {"id": "…"}, "call_kind": "voice", "platform_ref": {…}}},
   {"kind": "request", "request": {"key": "call:42", "kind": "call", "state": "expired"}},
+  {"kind": "identity", "user_id": "4915100000000@s.whatsapp.net", "new_id": "235978975346820@lid"},
   {"kind": "typing", "chat_id": "…", "user_id": "…", "state": "typing"},
   {"kind": "presence", "user_id": "…", "state": "online", "last_seen": null},
   {"kind": "platform_event", "platform_type": "updateBotStopped", "chat_id": null, "user_id": "…", "raw": {…}}
@@ -230,6 +232,18 @@ Rules for the adapter:
   platform's authoritative value instead. Contacts that arrive incrementally after first login
   (WhatsApp app-state sync, push-name chunks) are re-emitted as `contact` batches when the
   platform signals the sync finished.
+
+#### `identity` events
+
+`{"kind": "identity", "user_id": old, "new_id": new}` says the platform now addresses a user, and
+the direct chat whose id is that user, by another id. The core moves everything stored under the
+old id in one transaction: the contact (merged into an existing one, local alias and person link
+kept), the direct chat and its messages (duplicates dropped), senders, members, reactions,
+receipts, mentions and system notices, requests, and the account's self id; it then emits
+`chat.updated` with `merged_from` and `contact.updated`. Emit it before the first event that uses
+the new id. WhatsApp uses it when a phone JID turns out to have a LID (the adapter addresses users
+by LID whenever one is known, like mautrix-whatsapp). Without `user_id` or `new_id` the batch is
+rejected with `-32602`.
 
 #### `request` events
 
@@ -348,6 +362,7 @@ type Adapter interface {
 //   Blocker     Block(ctx, id, userID, blocked) error                                   (none)
 //   KeyManager  KeysStatus / KeysVerify / KeysExport / KeysImport                        [keys.manage]
 //   RequestAnswerer AnswerRequest(ctx, id, RequestAnswer{Kind, Key, ChatID, FromID, PlatformRef, Action, Reason}) error (none)
+//   IdentityResolver CanonicalIDs(ctx, id, ids) (map[old]new, error)                    (none)
 
 // Sink is what the core hands the adapter; every method is durable when it returns.
 type Sink interface {
@@ -360,7 +375,7 @@ type Sink interface {
 
 Optional capabilities are separate interfaces the core type-asserts (listed above);
 `Info().Capabilities` must agree with what is implemented. Interfaces without a capability
-(`ChatUpdater`, `Blocker`, `RequestAnswerer`) are used whenever present and answer `422 unsupported` otherwise.
+(`ChatUpdater`, `Blocker`, `RequestAnswerer`, `IdentityResolver`) are used whenever present and answer `422 unsupported` otherwise.
 
 The remote-adapter shim implements `Adapter` by forwarding to JSON-RPC and implements `Sink`
 handling on the receiving side; it is the only place the wire format exists in the core.
@@ -384,7 +399,18 @@ bridgev2 network connector runs unmodified as an in-process adapter:
 ```go
 // internal/adapters/signal/signal.go (build tag `signal`)
 connector.New(log, "signal", func() bridgev2.NetworkConnector { return &sigconn.SignalConnector{} })
+
+// internal/adapters/tgbridge/tgbridge.go (build tag `tgbridge`): a second Telegram instance
+connector.New(log, "telegram", func() bridgev2.NetworkConnector { return &tgconn.TelegramConnector{} },
+	connector.WithInstance("bridgev2"), connector.WithProbe(&tgconn.TelegramClient{}),
+	connector.WithNetworkDefaults("api_id: …\napi_hash: …\nanimated_sticker:\n  target: disable\n"))
 ```
+
+Options: `WithInstance` names the adapter instance so a hosted connector can serve a platform
+next to another adapter of it; `WithProbe` supplies a zero-value client for capability detection
+before any login; `WithNetworkDefaults` is server-wide connector YAML; `WithMaxFileSize` caps
+media the connector uploads (none by default: each connector's capabilities decide, e.g. Signal
+100 MB, Telegram 2 GB).
 
 One bridgev2 `Bridge` runs per account, with its own database `accounts/<id>/bridgev2.db`
 (modernc SQLite through `dbutil`) holding the bridge's users, logins, portals, ghosts, messages
@@ -406,14 +432,17 @@ the platform session. Mapping:
 | `NetworkAPI.HandleMatrixMessage` and the optional `Edit` / `Redaction` / `Reaction` / `ReadReceipt` / `Typing` / `IdentifierResolving` / `ContactListing` interfaces | `message.send` (a synthetic Matrix event from the account's user, resolved by `SendMessageStatus`), `message.edit`, `message.delete`, `message.react`, `chat.read`, `chat.typing`, `chat.resolve`, `contacts.list`; capabilities are derived from which interfaces the connected login implements |
 
 Outbound attachments are served back to the connector through `DownloadMedia` from the send
-request's `MediaSource`. The connector's YAML config is loaded from its own example config and
-overlaid with the account's `config.network` (a YAML string or an object with the same keys, e.g.
-`device_name` for Signal). Everything the virtual homeserver cannot answer (`GetEvent`, power
-levels beyond the bot, room tags) is a no-op.
+request's `MediaSource`. Inbound attachments are streamed from the connector's temp file into
+the sink; above `WithMaxFileSize` uploads fail with `bridgev2.ErrMediaTooLarge`, which connectors
+turn into a notice. The connector's YAML config is loaded from its own example config, overlaid
+with `WithNetworkDefaults`, then with the account's `config.network` (a YAML string or an object
+with the same keys, e.g. `device_name` for Signal). Everything the virtual homeserver cannot
+answer (`GetEvent`, power levels beyond the bot, room tags) is a no-op.
 
 Adding another bridgev2 network (Meta, Slack, Discord, Bluesky, …) is a package like
-`internal/adapters/signal`: import the connector, call `connector.New`, register it in
-`cmd/chat-bridge`. Only Signal needs cgo (libsignal); the rest are pure Go.
+`internal/adapters/signal`: import the connector, call `connector.New`, register it from a
+build-tagged `cmd/chat-bridge/adapters_<tag>.go`. Signal needs cgo for libsignal and Telegram for
+its bundled libwebp; the rest are pure Go.
 
 ## 12. Minimal adapter walk-through (TypeScript, Matrix)
 

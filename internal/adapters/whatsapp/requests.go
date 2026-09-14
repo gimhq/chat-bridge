@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"go.mau.fi/whatsmeow/types"
 	"go.mau.fi/whatsmeow/types/events"
 
 	"gimhq/chat-bridge/internal/adapter"
@@ -29,15 +30,14 @@ type inviteRef struct {
 	Expiration int64  `json:"expiration,omitempty"`
 }
 
-// callRequest turns an incoming call offer into a request that can be rejected.
-func callRequest(e *events.CallOffer) *adapter.Request {
-	chat := e.From.ToNonAD()
-	creator := e.CallCreator
-	if creator.IsEmpty() {
-		creator = e.From
+// callRequest turns an incoming call offer into a request; chat and creator are the resolved ids,
+// the reference keeps the caller as WhatsApp sent it for RejectCall.
+func callRequest(e *events.CallOffer, chat, creator types.JID) *adapter.Request {
+	caller := e.CallCreator
+	if caller.IsEmpty() {
+		caller = e.From
 	}
-	creator = creator.ToNonAD()
-	ref, _ := json.Marshal(callRef{Creator: creator.String(), CallID: e.CallID})
+	ref, _ := json.Marshal(callRef{Creator: caller.ToNonAD().String(), CallID: e.CallID})
 	at := e.Timestamp.UTC()
 	exp := at.Add(callRingTimeout)
 	return &adapter.Request{Key: "call:" + e.CallID, Kind: model.RequestKindCall, FromID: creator.String(), ChatID: chat.String(),
@@ -50,7 +50,8 @@ func callEnded(callID string) *adapter.Request {
 }
 
 // inviteRequest extracts a group invite from an inbound message; nil when the message is not one.
-func inviteRequest(e *events.Message) *adapter.Request {
+// from is the resolved sender id.
+func inviteRequest(e *events.Message, from types.JID) *adapter.Request {
 	if e.Info.IsFromMe {
 		return nil
 	}
@@ -62,7 +63,7 @@ func inviteRequest(e *events.Message) *adapter.Request {
 	inviter := e.Info.Sender.ToNonAD()
 	ref, _ := json.Marshal(inviteRef{Group: gi.GetGroupJID(), Inviter: inviter.String(), Code: gi.GetInviteCode(), Expiration: gi.GetInviteExpiration()})
 	r := &adapter.Request{Key: "invite:" + gi.GetGroupJID() + ":" + gi.GetInviteCode(), Kind: model.RequestKindChatInvite,
-		FromID: pn(e.Info.Sender, e.Info.SenderAlt).ToNonAD().String(), FromName: e.Info.PushName, ChatID: gi.GetGroupJID(),
+		FromID: from.String(), FromName: e.Info.PushName, ChatID: gi.GetGroupJID(),
 		ChatName: gi.GetGroupName(), ChatKind: model.ChatGroup, Message: gi.GetCaption(), PlatformRef: ref, CreatedAt: e.Info.Timestamp.UTC()}
 	if exp := gi.GetInviteExpiration(); exp > 0 {
 		t := time.Unix(exp, 0).UTC()

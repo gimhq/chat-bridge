@@ -75,6 +75,8 @@ export function systemText(c: Content): string {
     case 'name_changed': return `群名改为「${s.value ?? ''}」`
     case 'created': return '创建了群聊'
     case 'ephemeral_changed': return s.value && s.value !== '0' ? `开启了阅后即焚（${s.value} 秒）` : '关闭了阅后即焚'
+    case 'history_shared': return `${s.actor ?? '有人'} 共享了聊天记录${s.value && s.value !== '0' ? `（${s.value} 条）` : ''}`
+    case 'primary_device_only': return '此消息只能在手机上查看（例如一次性验证码）'
     default: return c.text || s.value || `[${s.kind}]`
   }
 }

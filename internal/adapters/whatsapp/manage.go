@@ -51,7 +51,7 @@ func (a *Adapter) CreateChat(ctx context.Context, id string, req adapter.CreateC
 	if err != nil {
 		return model.Chat{}, base.PlatformErr("create group", err)
 	}
-	return groupChat(g), nil
+	return acc.groupChat(g), nil
 }
 
 // UpdateChat renames a group.

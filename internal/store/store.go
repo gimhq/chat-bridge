@@ -31,7 +31,7 @@ type Store struct {
 	q  queryer
 }
 
-var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5}
+var migrations = []string{schemaV1, schemaV2, schemaV3, schemaV4, schemaV5, schemaV6}
 
 // Open opens (or creates) the database at path and applies pending migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -234,6 +234,13 @@ CREATE TABLE person_unlinks (
   other_account_id TEXT NOT NULL, other_user_id TEXT NOT NULL,
   PRIMARY KEY (account_id, user_id, other_account_id, other_user_id)
 );
+`
+
+// schemaV6 indexes user references so a re-ID (an adapter identity change) finds them without
+// scanning messages and members.
+const schemaV6 = `
+CREATE INDEX messages_sender ON messages(account_id, sender_id);
+CREATE INDEX chat_members_user ON chat_members(account_id, user_id);
 `
 
 const schemaV1 = `

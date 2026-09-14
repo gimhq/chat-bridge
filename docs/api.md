@@ -75,8 +75,9 @@ maps to `CHATBRIDGE_<SECTION>_<KEY>`; list values are comma separated in the env
 | `events.retention_days` | `CHATBRIDGE_EVENTS_RETENTION_DAYS` | `7` | event log retention |
 | `log.level` | `CHATBRIDGE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `persons.auto_link_by_phone` | `CHATBRIDGE_PERSONS_AUTO_LINK_BY_PHONE` | `true` | join contacts on different accounts that share a phone into one Person (§3.8) |
-| `adapters.telegram.api_id` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID` | — | Telegram application id (my.telegram.org), inherited by every Telegram account |
-| `adapters.telegram.api_hash` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_HASH` | — | Telegram application hash (secret); an account's own `config` may override both |
+| `adapters.telegram.api_id` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID` | — | Telegram application id (my.telegram.org), set once for the server and inherited by every Telegram account |
+| `adapters.telegram.api_hash` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_HASH` | — | Telegram application hash (secret); an account's own `config` may override both, which is only needed for a different application |
+| `adapters.telegram.bridgev2` | `CHATBRIDGE_ADAPTERS_TELEGRAM_BRIDGEV2` | `false` | also register mautrix-telegram's bridgev2 connector as Telegram instance `bridgev2` next to the gotd adapter (`local`); builds with `-tags tgbridge` only. While both are registered, `POST /accounts` for `telegram` must name `adapter` |
 
 Data directory layout (`storage.md` §1):
 
@@ -282,8 +283,10 @@ and `[label](url)`. Nothing else is guaranteed.
 
 `system.kind`: `created`, `member_joined`, `member_left`, `member_added`, `member_removed`,
 `role_changed`, `name_changed`, `avatar_changed`, `description_changed`, `pinned`, `unpinned`,
-`ephemeral_changed` (`value` = seconds or 0), `encryption_changed`, `other` (`value` = platform
-text). `actor` is who did it, `targets` who it was done to. Membership kinds also update the Chat
+`ephemeral_changed` (`value` = seconds or 0), `encryption_changed`, `history_shared` (`actor`
+shared recent history with `targets`, `value` = message count), `primary_device_only` (the
+platform keeps this message, e.g. a one-time code, on the phone and off linked devices), `other`
+(`value` = platform text). `actor` is who did it, `targets` who it was done to. Membership kinds also update the Chat
 (`chat.updated`), so a consumer that only tracks state can ignore system messages.
 
 Attachment:
@@ -425,7 +428,8 @@ built-in adapters:
 | Platform | Required | Optional | Login flows |
 |---|---|---|---|
 | `whatsapp` | — | `device_name` | `qr`, `phone` (pairing code) |
-| `telegram` | — (`api_id` / `api_hash` come from `adapters.telegram.*`; either may be overridden per account) | `device_name` | `phone` (code, then 2FA password if enabled), `qr` (also asks for the 2FA password) |
+| `telegram` | — (`api_id` / `api_hash` come from `adapters.telegram.*`, usually set once through `CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID|HASH`; either may be overridden per account) | `device_name` | `phone` (code, then 2FA password if enabled), `qr` (also asks for the 2FA password) |
+| `telegram`, instance `bridgev2` | — (`api_id` / `api_hash` from `adapters.telegram.*`) | `network`: mautrix-telegram connector settings as a YAML string or an object (`api_id`, `api_hash`, `device_info`, `sync`, `proxy`, `animated_sticker`, …; defaults from the connector's example config, animated stickers unconverted) | `phone` (code, then 2FA password), `qr` (then 2FA password), `bot` (BotFather token), `manual` (session JSON). Only with `-tags tgbridge` and `adapters.telegram.bridgev2`; see `adapter-protocol.md` §11 |
 | `matrix` | `homeserver` (base URL) | `device_name` | `password` (user + password), `token` (user + access token). Rooms are end-to-end encrypted transparently; see §4.7a |
 | `signal` | — | `network`: mautrix-signal connector settings as a YAML string or an object (`device_name`, `displayname_template`, `sync_contacts_on_startup`, …; defaults from the connector's example config) | `qr` (link chat-bridge as a secondary device: scan the `sgnl://linkdevice` URI). Only present in builds with `-tags signal`; see `adapter-protocol.md` §11 |
 
@@ -699,7 +703,7 @@ handled and resume with `?cursor=`. The bridge keeps at least 7 days of events.
 | `message.reaction` | `{chat_id, message_id, sender_id, emoji, removed: bool}` |
 | `message.receipt` | `{chat_id, message_ids[], user_id, kind: "delivered" \| "read"}` |
 | `chat.new` | Chat |
-| `chat.updated` | Chat (name, avatar, membership, mute/archive) |
+| `chat.updated` | Chat (name, avatar, membership, mute/archive). `merged_from` is set when the platform re-addressed a direct chat (WhatsApp phone number → LID): the chat and messages stored under that old id now live under this one, and the old id answers `404` |
 | `chat.typing` | `{chat_id, user_id, state}` |
 | `presence` | `{user_id, state: "online" \| "offline", last_seen?}` |
 | `contact.updated` | Contact (names, avatar, blocked, is_contact, person_id) |

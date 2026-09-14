@@ -527,4 +527,16 @@ func TestRemoteAdapterRequests(t *testing.T) {
 	if resp.Error == nil || resp.Error.Code != codeInvalidParams {
 		t.Fatalf("malformed request event: %+v", resp)
 	}
+
+	// An identity event moves what the core stored under the old id.
+	cl.send(rpcMessage{ID: json.RawMessage("4"), Method: "events", Params: mustJSON(map[string]any{"account_id": "sig1", "events": []map[string]any{
+		{"kind": "identity", "user_id": "+2", "new_id": "uuid-2"}}})})
+	eventually(t, func() bool {
+		list, _, _ := c.ListRequests(ctx, "sig1", store.RequestFilter{}, "", 10)
+		return len(list) == 1 && list[0].From != nil && list[0].From.ID == "uuid-2" && list[0].Chat != nil && list[0].Chat.ID == "uuid-2"
+	})
+	resp = cl.call("events", map[string]any{"account_id": "sig1", "events": []map[string]any{{"kind": "identity", "user_id": "+2"}}})
+	if resp.Error == nil || resp.Error.Code != codeInvalidParams {
+		t.Fatalf("identity event without new_id: %+v", resp)
+	}
 }

@@ -43,6 +43,9 @@ type Adapter struct {
 	History     map[string][]model.Message
 	Answered    []adapter.RequestAnswer
 	FailAnswer  error
+
+	// Identities maps stored ids to the ids CanonicalIDs reports.
+	Identities map[string]string
 }
 
 // New returns an adapter with no accounts.
@@ -314,4 +317,16 @@ func (a *Adapter) AnswerRequest(_ context.Context, _ string, ans adapter.Request
 	}
 	a.Answered = append(a.Answered, ans)
 	return nil
+}
+
+func (a *Adapter) CanonicalIDs(_ context.Context, _ string, ids []string) (map[string]string, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	out := map[string]string{}
+	for _, id := range ids {
+		if to, ok := a.Identities[id]; ok {
+			out[id] = to
+		}
+	}
+	return out, nil
 }

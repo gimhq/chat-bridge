@@ -120,6 +120,8 @@ type wireEvent struct {
 	Raw          json.RawMessage `json:"raw,omitempty"`
 
 	Request *wireRequest `json:"request,omitempty"`
+
+	NewID string `json:"new_id,omitempty"`
 }
 
 // wireRequest is the `request` event payload (adapter-protocol.md §5.3).
@@ -205,6 +207,11 @@ func (w wireEvent) decode() (adapter.Event, error) {
 			in.CreatedAt = r.CreatedAt.UTC()
 		}
 		ev.Request = in
+	case adapter.EvIdentity:
+		if w.UserID == "" || w.NewID == "" {
+			return ev, fmt.Errorf("identity event needs user_id and new_id")
+		}
+		ev.NewID = w.NewID
 	case adapter.EvMessageUpdate, adapter.EvMessageDelete, adapter.EvReaction, adapter.EvReceipt, adapter.EvChat,
 		adapter.EvContact, adapter.EvTyping, adapter.EvPresence, adapter.EvPlatform:
 	default:

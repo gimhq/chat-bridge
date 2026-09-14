@@ -447,7 +447,7 @@ func (s *Store) PersonChats(ctx context.Context, id string) ([]model.Chat, error
 			}
 		}
 	}
-	return out, nil
+	return out, s.NameDirectChats(ctx, out)
 }
 
 // PersonMessages merges a person's messages across accounts, newest first. Scope "direct" is the

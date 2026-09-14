@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"os"
 	"path/filepath"
 	"sync"
@@ -49,12 +50,15 @@ type Factory func() bridgev2.NetworkConnector
 
 // Adapter is the host.
 type Adapter struct {
-	log      *slog.Logger
-	platform string
-	factory  Factory
-	probe    bridgev2.NetworkAPI
-	sink     adapter.Sink
-	accounts base.Accounts[*account]
+	log         *slog.Logger
+	platform    string
+	instance    string
+	factory     Factory
+	probe       bridgev2.NetworkAPI
+	defaults    string // connector YAML overlaid on its example config
+	maxFileSize int64  // 0 = no host limit
+	sink        adapter.Sink
+	accounts    base.Accounts[*account]
 }
 
 // Compile-time contract checks: the host is a full adapter with every optional interface; the
@@ -76,6 +80,24 @@ type Option func(*Adapter)
 // known before any account has logged in; bridgev2 declares them on the per-login client.
 func WithProbe(client bridgev2.NetworkAPI) Option {
 	return func(a *Adapter) { a.probe = client }
+}
+
+// WithInstance names the adapter instance, so a hosted connector can serve a platform next to
+// another adapter of it (the core defaults an empty instance to "local").
+func WithInstance(instance string) Option {
+	return func(a *Adapter) { a.instance = instance }
+}
+
+// WithNetworkDefaults overlays server-wide connector YAML on the connector's example config;
+// each account's `config.network` still wins.
+func WithNetworkDefaults(yamlDoc string) Option {
+	return func(a *Adapter) { a.defaults = yamlDoc }
+}
+
+// WithMaxFileSize caps media the connector uploads to the virtual homeserver. Without it the host
+// imposes no limit and the connector's own capabilities decide.
+func WithMaxFileSize(bytes int64) Option {
+	return func(a *Adapter) { a.maxFileSize = bytes }
 }
 
 // New returns a host for connectors produced by factory, published as platform.
@@ -105,7 +127,7 @@ func (a *Adapter) Info() adapter.Info {
 			caps = append(caps, capsOf(cl)...)
 		}
 	})
-	return adapter.Info{Platform: a.platform, Name: name.DisplayName + " (mautrix bridgev2)", Version: "bridgev2",
+	return adapter.Info{Platform: a.platform, Instance: a.instance, Name: name.DisplayName + " (mautrix bridgev2)", Version: "bridgev2",
 		Capabilities: dedupe(caps), LoginFlows: flows,
 		ConfigSchema: json.RawMessage(`{"type":"object","properties":{"network":{"type":"string","description":"connector YAML config, see the connector's example"}}}`)}
 }
@@ -559,9 +581,22 @@ type account struct {
 	cancel   context.CancelFunc
 }
 
-// maxFileSize is handed to connectors that size-check attachments (mautrix takes it from the
-// homeserver's media config); Signal's own cap is 100 MB.
-const maxFileSize = 100 << 20
+// uploadLimit is handed to connectors that size-check attachments (mautrix takes it from the
+// homeserver's media config); without WithMaxFileSize it is unbounded.
+func (a *Adapter) uploadLimit() int64 {
+	if a.maxFileSize > 0 {
+		return a.maxFileSize
+	}
+	return math.MaxInt64
+}
+
+// checkSize rejects media above WithMaxFileSize the way a homeserver rejects oversized uploads.
+func (a *Adapter) checkSize(n int64) error {
+	if a.maxFileSize > 0 && n > a.maxFileSize {
+		return fmt.Errorf("%w (%d > %d bytes)", bridgev2.ErrMediaTooLarge, n, a.maxFileSize)
+	}
+	return nil
+}
 
 func (acc *account) start(ctx context.Context) error {
 	raw, err := sql.Open("sqlite", "file:"+filepath.Join(acc.dir, dbFile)+"?_txlock=immediate&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(1)")
@@ -580,7 +615,7 @@ func (acc *account) start(ctx context.Context) error {
 		Permissions:           bridgeconfig.PermissionConfig{"*": {SendEvents: true, Commands: true, Login: true, Admin: true}},
 	}
 	net := acc.host.factory()
-	if err := loadNetworkConfig(net, acc.cfg); err != nil {
+	if err := loadNetworkConfig(net, acc.host.defaults, acc.cfg); err != nil {
 		_ = raw.Close()
 		return err
 	}
@@ -589,7 +624,7 @@ func (acc *account) start(ctx context.Context) error {
 	acc.db, acc.raw = db, raw
 	acc.ctx, acc.cancel = context.WithCancel(context.Background())
 	if m, ok := net.(bridgev2.MaxFileSizeingNetwork); ok {
-		m.SetMaxFileSize(maxFileSize)
+		m.SetMaxFileSize(acc.host.uploadLimit())
 	}
 	if err := acc.bridge.Start(acc.ctx); err != nil {
 		acc.cancel()
@@ -929,15 +964,19 @@ func contactFromInfo(uid networkid.UserID, info *bridgev2.UserInfo) model.Contac
 	return c
 }
 
-// loadNetworkConfig fills the connector's config struct from its example YAML, then overlays
-// the account's `network` field (a YAML string or a JSON object with the same keys).
-func loadNetworkConfig(net bridgev2.NetworkConnector, accountCfg json.RawMessage) error {
+// loadNetworkConfig fills the connector's config struct from its example YAML, overlays the
+// host's defaults, then the account's `network` field (a YAML string or a JSON object with the
+// same keys).
+func loadNetworkConfig(net bridgev2.NetworkConnector, defaults string, accountCfg json.RawMessage) error {
 	example, target, _ := net.GetConfig()
 	if target == nil {
 		return nil
 	}
 	if err := yaml.Unmarshal([]byte(example), target); err != nil {
 		return fmt.Errorf("connector example config: %w", err)
+	}
+	if err := yaml.Unmarshal([]byte(defaults), target); err != nil {
+		return fmt.Errorf("connector default config: %w", err)
 	}
 	if len(accountCfg) == 0 {
 		return nil

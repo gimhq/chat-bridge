@@ -15,6 +15,7 @@ require (
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/rs/zerolog v1.35.1
 	go.mau.fi/mautrix-signal v0.2608.0
+	go.mau.fi/mautrix-telegram v0.2608.0
 	go.mau.fi/util v0.10.1-0.20260820140024-eb612d936fde
 	go.mau.fi/whatsmeow v0.0.0-20260909164725-b25a56d63729
 	google.golang.org/protobuf v1.36.12
@@ -48,10 +49,10 @@ require (
 	github.com/gotd/ige v0.3.0 // indirect
 	github.com/gotd/log v0.1.0 // indirect
 	github.com/gotd/neo v0.1.5 // indirect
-	github.com/klauspost/compress v1.19.0 // indirect
+	github.com/klauspost/compress v1.19.2 // indirect
 	github.com/knadh/koanf/maps v0.1.2 // indirect
 	github.com/leodido/go-urn v1.5.0 // indirect
-	github.com/mattn/go-colorable v0.1.14 // indirect
+	github.com/mattn/go-colorable v0.1.15 // indirect
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/mattn/go-sqlite3 v1.14.49 // indirect
@@ -73,16 +74,19 @@ require (
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
 	github.com/yuin/goldmark v1.8.5 // indirect
 	go.mau.fi/libsignal v0.2.2 // indirect
+	go.mau.fi/webp v0.3.0 // indirect
 	go.mau.fi/zeroconfig v0.2.0 // indirect
-	go.opentelemetry.io/otel v1.44.0 // indirect
-	go.opentelemetry.io/otel/metric v1.44.0 // indirect
-	go.opentelemetry.io/otel/trace v1.44.0 // indirect
+	go.mau.fi/zerozap v0.1.2 // indirect
+	go.opentelemetry.io/otel v1.45.0 // indirect
+	go.opentelemetry.io/otel/metric v1.45.0 // indirect
+	go.opentelemetry.io/otel/trace v1.45.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.28.0 // indirect
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20260813180055-c1d0aacb2297 // indirect
+	golang.org/x/image v0.45.0 // indirect
 	golang.org/x/mod v0.40.0 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect

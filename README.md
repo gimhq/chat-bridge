@@ -35,9 +35,16 @@ stage clones mautrix-signal and runs its `build-rust.sh`); on a developer machin
 then `CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go build -tags goolm,signal ./...`. Without the tag the
 binary stays pure Go and Signal is simply absent from `GET /platforms`.
 
+`-tags tgbridge` adds a second Telegram implementation: mautrix-telegram's bridgev2 connector,
+registered as instance `bridgev2` next to the gotd adapter (`local`) when
+`adapters.telegram.bridgev2` is `true` (`CHATBRIDGE_ADAPTERS_TELEGRAM_BRIDGEV2`). It needs cgo for
+the connector's bundled libwebp (a C compiler, no extra library) and adds about 36 MB to the
+binary. With both instances registered, `POST /accounts` for `telegram` must name the `adapter`;
+existing accounts stay on the instance they are bound to.
+
 Prebuilt binaries for Linux, macOS and Windows (amd64, arm64) are attached to each
 [GitHub release](https://github.com/gimhq/chat-bridge/releases). They are pure Go with the web UI
-embedded and without Signal; use the container image for Signal. Pushing a `v*` tag runs
+embedded and without Signal or the bridgev2 Telegram instance; use the container image for those. Pushing a `v*` tag runs
 `.github/workflows/release.yml`, which runs the gates, builds the archives and publishes the release.
 
 First account, WhatsApp via QR:
@@ -51,8 +58,9 @@ curl -s -H "$T" "$B/events?wait=30"                                             
 
 Every platform follows the same shape: `POST /accounts` → `POST /accounts/{a}/login` (QR, code,
 password… described by the step machine) → chats, messages, media, contacts under
-`/accounts/{a}/…` → events on `/events`. Telegram needs `api_id`/`api_hash` (once, under
-`adapters.telegram` in the config, or per account in `config`), Matrix a `homeserver`. Matrix
+`/accounts/{a}/…` → events on `/events`. Telegram needs `api_id`/`api_hash` once for the whole server
+(`CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID` / `_API_HASH`, or `adapters.telegram` in the config; accounts
+inherit them and only a different application needs them per account), Matrix a `homeserver`. Matrix
 rooms are end-to-end encrypted transparently; `POST /accounts/{a}/keys/verify` with the
 account's recovery key cross-signs the bridge device and restores the key backup. Signal links
 as a secondary device: `{"flow":"qr"}` returns the `sgnl://linkdevice` URI to scan.
@@ -98,6 +106,7 @@ internal/adapters/
   matrixcontent/        Matrix event content <-> model.Content (shared by matrix and connector)
   connector/            host for mautrix bridgev2 network connectors (virtual Matrix side)
   signal/               Signal = hosted mautrix-signal connector (build tag `signal`, cgo)
+  tgbridge/             Telegram instance `bridgev2` = hosted mautrix-telegram connector (build tag `tgbridge`, cgo)
   remote/               WebSocket + JSON-RPC host for out-of-process adapters
 internal/webui/         go:embed of the built UI (dist/ is generated)
 web/                    management UI source (bun; see Web UI)
@@ -111,6 +120,8 @@ docs/                   specs, architecture, PMA task/plan tracking
 test -z "$(gofmt -l .)" && go vet -tags goolm ./... && golangci-lint run && go test -tags goolm ./... && go build -tags goolm ./...
 # with libsignal available (see above); skipped when .tmp/libsignal/libsignal_ffi.a is absent
 CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go vet -tags goolm,signal ./... && CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go build -tags goolm,signal ./...
+# bridgev2 Telegram instance (a C compiler is enough)
+go vet -tags goolm,tgbridge ./... && go test -tags goolm,tgbridge ./internal/adapters/tgbridge/ && go build -tags goolm,tgbridge ./...
 ```
 
 Web UI gates (in `web/`):

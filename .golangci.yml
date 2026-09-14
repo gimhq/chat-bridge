@@ -3,6 +3,8 @@ run:
   # Matrix E2EE uses the pure-Go olm implementation; the default backend needs cgo + libolm.
   build-tags:
     - goolm
+    # The bridgev2 Telegram instance; cgo (gcc) only, unlike `signal`, which needs libsignal.
+    - tgbridge
 linters:
   default: standard
   enable:

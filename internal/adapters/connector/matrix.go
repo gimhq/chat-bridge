@@ -462,12 +462,66 @@ func (in *virtualIntent) DownloadMediaToFile(ctx context.Context, uri id.Content
 
 // UploadMedia stores inbound attachments through the sink; the mxc id names the media row.
 func (in *virtualIntent) UploadMedia(ctx context.Context, _ id.RoomID, data []byte, fileName, mimeType string) (id.ContentURIString, *event.EncryptedFileInfo, error) {
-	acc := in.vm.acc
-	mediaID := "bv2_" + uuid.NewString()
+	if err := in.vm.acc.host.checkSize(int64(len(data))); err != nil {
+		return "", nil, err
+	}
 	if mimeType == "" {
 		mimeType = http.DetectContentType(data)
 	}
-	att, err := acc.rep.PutMedia(ctx, mediaID, adapter.MediaMeta{Mime: mimeType, FileName: fileName}, bytes.NewReader(data))
+	return in.store(ctx, bytes.NewReader(data), fileName, mimeType)
+}
+
+// UploadMediaStream lets the connector write a temp file and streams it to the sink, so large
+// attachments never sit in memory.
+func (in *virtualIntent) UploadMediaStream(ctx context.Context, _ id.RoomID, size int64, _ bool, cb bridgev2.FileStreamCallback) (id.ContentURIString, *event.EncryptedFileInfo, error) {
+	host := in.vm.acc.host
+	if err := host.checkSize(size); err != nil {
+		return "", nil, err
+	}
+	f, err := os.CreateTemp("", "chat-bridge-upload-*")
+	if err != nil {
+		return "", nil, err
+	}
+	defer os.Remove(f.Name())
+	defer f.Close()
+	res, err := cb(f)
+	if err != nil {
+		return "", nil, err
+	}
+	src := f
+	if res != nil && res.ReplacementFile != "" {
+		defer os.Remove(res.ReplacementFile)
+		if src, err = os.Open(res.ReplacementFile); err != nil {
+			return "", nil, err
+		}
+		defer src.Close()
+	}
+	st, err := src.Stat()
+	if err != nil {
+		return "", nil, err
+	}
+	if err := host.checkSize(st.Size()); err != nil {
+		return "", nil, err
+	}
+	var name, mime string
+	if res != nil {
+		name, mime = res.FileName, res.MimeType
+	}
+	if mime == "" {
+		head := make([]byte, 512)
+		n, _ := src.ReadAt(head, 0)
+		mime = http.DetectContentType(head[:n])
+	}
+	if _, err := src.Seek(0, io.SeekStart); err != nil {
+		return "", nil, err
+	}
+	return in.store(ctx, src, name, mime)
+}
+
+func (in *virtualIntent) store(ctx context.Context, r io.Reader, fileName, mimeType string) (id.ContentURIString, *event.EncryptedFileInfo, error) {
+	acc := in.vm.acc
+	mediaID := "bv2_" + uuid.NewString()
+	att, err := acc.rep.PutMedia(ctx, mediaID, adapter.MediaMeta{Mime: mimeType, FileName: fileName}, r)
 	if err != nil {
 		return "", nil, err
 	}
@@ -475,41 +529,6 @@ func (in *virtualIntent) UploadMedia(ctx context.Context, _ id.RoomID, data []by
 	acc.stored[mediaID] = att
 	acc.mu.Unlock()
 	return id.ContentURIString("mxc://" + serverName + "/" + mediaID), nil, nil
-}
-
-func (in *virtualIntent) UploadMediaStream(ctx context.Context, roomID id.RoomID, _ int64, requireFile bool, cb bridgev2.FileStreamCallback) (id.ContentURIString, *event.EncryptedFileInfo, error) {
-	var buf bytes.Buffer
-	var res *bridgev2.FileStreamResult
-	var err error
-	if requireFile {
-		f, ferr := os.CreateTemp("", "chat-bridge-upload-*")
-		if ferr != nil {
-			return "", nil, ferr
-		}
-		defer os.Remove(f.Name())
-		defer f.Close()
-		res, err = cb(f)
-		if err != nil {
-			return "", nil, err
-		}
-		path := f.Name()
-		if res != nil && res.ReplacementFile != "" {
-			path = res.ReplacementFile
-			defer os.Remove(path)
-		}
-		data, rerr := os.ReadFile(path)
-		if rerr != nil {
-			return "", nil, rerr
-		}
-		buf.Write(data)
-	} else if res, err = cb(&buf); err != nil {
-		return "", nil, err
-	}
-	var name, mime string
-	if res != nil {
-		name, mime = res.FileName, res.MimeType
-	}
-	return in.UploadMedia(ctx, roomID, buf.Bytes(), name, mime)
 }
 
 func (in *virtualIntent) SetDisplayName(_ context.Context, name string) error {

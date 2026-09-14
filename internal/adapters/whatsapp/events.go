@@ -18,20 +18,20 @@ func (acc *account) handleEvent(evt any) {
 	switch e := evt.(type) {
 	case *events.Message:
 		evs := acc.convertMessage(e)
-		if r := inviteRequest(e); r != nil {
+		if r := inviteRequest(e, acc.userJID(e.Info.Sender, e.Info.SenderAlt)); r != nil {
 			evs = append(evs, adapter.Event{Kind: adapter.EvRequest, Request: r})
 		}
-		acc.rep.Events(evs...)
+		acc.emit(evs...)
 	case *events.Receipt:
-		acc.rep.Events(acc.convertReceipt(e)...)
+		acc.emit(acc.convertReceipt(e)...)
 	case *events.ChatPresence:
 		state := "paused"
 		if e.State == types.ChatPresenceComposing {
 			state = "typing"
 		}
-		acc.rep.Events(adapter.Event{Kind: adapter.EvTyping, ChatID: chatOf(e.MessageSource).String(), UserID: pn(e.Sender, e.SenderAlt).String(), State: state})
+		acc.emit(adapter.Event{Kind: adapter.EvTyping, ChatID: acc.chatJID(e.MessageSource).String(), UserID: acc.userJID(e.Sender, e.SenderAlt).String(), State: state})
 	case *events.Presence:
-		ev := adapter.Event{Kind: adapter.EvPresence, UserID: e.From.ToNonAD().String(), State: "online"}
+		ev := adapter.Event{Kind: adapter.EvPresence, UserID: acc.canonID(e.From).String(), State: "online"}
 		if e.Unavailable {
 			ev.State = "offline"
 			if !e.LastSeen.IsZero() {
@@ -39,24 +39,27 @@ func (acc *account) handleEvent(evt any) {
 				ev.LastSeen = &ls
 			}
 		}
-		acc.rep.Events(ev)
+		acc.emit(ev)
 	case *events.Contact:
-		jid := e.JID.ToNonAD()
-		acc.rep.Events(adapter.Event{Kind: adapter.EvContact, Contact: &model.Contact{
-			ID: jid.String(), Handle: phoneOf(jid), Phone: phoneOf(jid), IsContact: true,
-			Names: model.Names{Alias: e.Action.GetFullName(), First: e.Action.GetFirstName()},
-		}})
+		ctx, cancel := base.Timeout(lookupTimeout)
+		c := acc.contactFor(ctx, e.JID)
+		cancel()
+		c.IsContact = true
+		c.Names.Alias = firstNonEmpty(e.Action.GetFullName(), c.Names.Alias)
+		c.Names.First = firstNonEmpty(e.Action.GetFirstName(), c.Names.First)
+		acc.emit(adapter.Event{Kind: adapter.EvContact, Contact: &c})
 	case *events.PushName:
-		jid := pn(e.JID, e.JIDAlt)
-		acc.rep.Events(adapter.Event{Kind: adapter.EvContact, Contact: &model.Contact{ID: jid.String(), Handle: phoneOf(jid), Phone: phoneOf(jid), Names: model.Names{Profile: e.NewPushName}}})
+		phone := phoneOf(acc.phoneJID(e.JID, e.JIDAlt))
+		acc.emit(adapter.Event{Kind: adapter.EvContact, Contact: &model.Contact{ID: acc.userJID(e.JID, e.JIDAlt).String(), Handle: phone, Phone: phone,
+			Names: model.Names{Profile: e.NewPushName}}})
 	case *events.GroupInfo:
-		acc.rep.Events(acc.convertGroupInfo(e)...)
+		acc.emit(acc.convertGroupInfo(e)...)
 	case *events.JoinedGroup:
-		acc.rep.Events(acc.groupEvents(&e.GroupInfo)...)
+		acc.emit(acc.groupEvents(&e.GroupInfo)...)
 	case *events.Mute:
-		acc.rep.Events(adapter.Event{Kind: adapter.EvChat, Chat: &model.Chat{ID: e.JID.ToNonAD().String(), Kind: chatKind(e.JID), Muted: e.Action.GetMuted()}})
+		acc.emit(adapter.Event{Kind: adapter.EvChat, Chat: &model.Chat{ID: acc.canonID(e.JID).String(), Kind: chatKind(e.JID), Muted: e.Action.GetMuted()}})
 	case *events.Archive:
-		acc.rep.Events(adapter.Event{Kind: adapter.EvChat, Chat: &model.Chat{ID: e.JID.ToNonAD().String(), Kind: chatKind(e.JID), Archived: e.Action.GetArchived()}})
+		acc.emit(adapter.Event{Kind: adapter.EvChat, Chat: &model.Chat{ID: acc.canonID(e.JID).String(), Kind: chatKind(e.JID), Archived: e.Action.GetArchived()}})
 	case *events.HistorySync:
 		acc.convertHistory(e)
 	case *events.AppStateSyncComplete:
@@ -65,25 +68,26 @@ func (acc *account) handleEvent(evt any) {
 			acc.syncContacts()
 		}
 	case *events.CallOffer:
-		chat := e.From.ToNonAD()
-		m := model.Message{ID: e.CallID, ChatID: chat.String(), Sender: model.Sender{ID: e.CallCreator.ToNonAD().String()}, Timestamp: e.Timestamp.UTC(),
+		chat, creator := acc.callParties(e.BasicCallMeta)
+		m := model.Message{ID: e.CallID, ChatID: chat.String(), Sender: model.Sender{ID: creator.String()}, Timestamp: e.Timestamp.UTC(),
 			Content: model.Content{Type: model.ContentCall, Call: &model.Call{Kind: "voice", State: "ringing"}}}
-		acc.rep.Events(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: &model.Chat{ID: chat.String(), Kind: chatKind(chat)}},
-			adapter.Event{Kind: adapter.EvRequest, Request: callRequest(e)})
+		acc.emit(adapter.Event{Kind: adapter.EvMessage, Message: &m, Chat: &model.Chat{ID: chat.String(), Kind: chatKind(chat)}},
+			adapter.Event{Kind: adapter.EvRequest, Request: callRequest(e, chat, creator)})
 	case *events.CallTerminate:
 		state := "ended"
 		if e.Reason == "timeout" {
 			state = "missed"
 		}
-		acc.rep.Events(adapter.Event{Kind: adapter.EvMessageUpdate, ChatID: e.From.ToNonAD().String(), MessageID: e.CallID,
+		chat, _ := acc.callParties(e.BasicCallMeta)
+		acc.emit(adapter.Event{Kind: adapter.EvMessageUpdate, ChatID: chat.String(), MessageID: e.CallID,
 			Content: &model.Content{Type: model.ContentCall, Call: &model.Call{Kind: "voice", State: state}}, At: e.Timestamp.UTC()},
 			adapter.Event{Kind: adapter.EvRequest, Request: callEnded(e.CallID)})
 	case *events.Picture:
-		acc.rep.Events(adapter.Event{Kind: adapter.EvPlatform, PlatformType: "picture", ChatID: e.JID.ToNonAD().String(), UserID: e.Author.ToNonAD().String(),
+		acc.emit(adapter.Event{Kind: adapter.EvPlatform, PlatformType: "picture", ChatID: acc.canonID(e.JID).String(), UserID: acc.canonID(e.Author).String(),
 			Raw: []byte(fmt.Sprintf(`{"picture_id":%q,"removed":%t}`, e.PictureID, e.Remove))})
 	case *events.UndecryptableMessage:
-		acc.rep.Events(adapter.Event{Kind: adapter.EvPlatform, PlatformType: "undecryptable", ChatID: chatOf(e.Info.MessageSource).String(),
-			UserID: pn(e.Info.Sender, e.Info.SenderAlt).String(), MessageID: e.Info.ID,
+		acc.emit(adapter.Event{Kind: adapter.EvPlatform, PlatformType: "undecryptable", ChatID: acc.chatJID(e.Info.MessageSource).String(),
+			UserID: acc.userJID(e.Info.Sender, e.Info.SenderAlt).String(), MessageID: e.Info.ID,
 			Raw: []byte(fmt.Sprintf(`{"unavailable":%t,"type":%q}`, e.IsUnavailable, e.UnavailableType))})
 	case *events.PairSuccess:
 		acc.rep.Log.Info("paired", "jid", e.ID.String(), "platform", e.Platform)
@@ -126,6 +130,19 @@ func (acc *account) handleEvent(evt any) {
 	}
 }
 
+// callParties returns the chat of a call and its caller.
+func (acc *account) callParties(meta types.BasicCallMeta) (chat, creator types.JID) {
+	caller := meta.CallCreator
+	if caller.IsEmpty() {
+		caller = meta.From
+	}
+	creator = acc.userJID(caller, meta.CallCreatorAlt)
+	if meta.From.ToNonAD() == caller.ToNonAD() {
+		return creator, creator
+	}
+	return acc.canonID(meta.From), creator
+}
+
 func (acc *account) convertReceipt(e *events.Receipt) []adapter.Event {
 	kind := ""
 	switch e.Type {
@@ -137,16 +154,20 @@ func (acc *account) convertReceipt(e *events.Receipt) []adapter.Event {
 		return nil
 	}
 	return []adapter.Event{{
-		Kind: adapter.EvReceipt, ChatID: chatOf(e.MessageSource).String(), UserID: pn(e.Sender, e.SenderAlt).String(),
+		Kind: adapter.EvReceipt, ChatID: acc.chatJID(e.MessageSource).String(), UserID: acc.userJID(e.Sender, e.SenderAlt).String(),
 		MessageIDs: e.MessageIDs, Receipt: kind, At: e.Timestamp.UTC(),
 	}}
 }
 
-func memberID(p types.GroupParticipant) string {
-	if !p.PhoneNumber.IsEmpty() {
-		return p.PhoneNumber.ToNonAD().String()
+// memberID prefers the participant's LID.
+func (acc *account) memberID(p types.GroupParticipant) string {
+	if lid := p.LID.ToNonAD(); !lid.IsEmpty() {
+		if pn := p.PhoneNumber.ToNonAD(); !pn.IsEmpty() {
+			acc.learn(pn, lid)
+		}
+		return lid.String()
 	}
-	return p.JID.ToNonAD().String()
+	return acc.userJID(p.JID, p.PhoneNumber).String()
 }
 
 func role(p types.GroupParticipant) string {
@@ -161,20 +182,20 @@ func role(p types.GroupParticipant) string {
 }
 
 // groupChat maps whatsmeow group metadata to a Chat with participants.
-func groupChat(g *types.GroupInfo) model.Chat {
+func (acc *account) groupChat(g *types.GroupInfo) model.Chat {
 	ch := model.Chat{ID: g.JID.String(), Kind: model.ChatGroup, Name: g.GroupName.Name}
 	if g.GroupEphemeral.IsEphemeral {
 		ttl := int64(g.GroupEphemeral.DisappearingTimer)
 		ch.EphemeralTTL = &ttl
 	}
 	for _, p := range g.Participants {
-		ch.Participants = append(ch.Participants, model.Participant{ID: memberID(p), Role: role(p)})
+		ch.Participants = append(ch.Participants, model.Participant{ID: acc.memberID(p), Role: role(p)})
 	}
 	return ch
 }
 
 func (acc *account) groupEvents(g *types.GroupInfo) []adapter.Event {
-	ch := groupChat(g)
+	ch := acc.groupChat(g)
 	out := []adapter.Event{{Kind: adapter.EvChat, Chat: &ch}}
 	for _, p := range ch.Participants {
 		out = append(out, adapter.Event{Kind: adapter.EvMember, Member: &adapter.Member{ChatID: ch.ID, UserID: p.ID, Role: p.Role}})
@@ -185,10 +206,15 @@ func (acc *account) groupEvents(g *types.GroupInfo) []adapter.Event {
 func (acc *account) convertGroupInfo(e *events.GroupInfo) []adapter.Event {
 	chat := e.JID.String()
 	actor := ""
-	if e.SenderPN != nil {
-		actor = e.SenderPN.ToNonAD().String()
-	} else if e.Sender != nil {
-		actor = e.Sender.ToNonAD().String()
+	switch {
+	case e.Sender != nil:
+		alt := types.EmptyJID
+		if e.SenderPN != nil {
+			alt = *e.SenderPN
+		}
+		actor = acc.userJID(*e.Sender, alt).String()
+	case e.SenderPN != nil:
+		actor = acc.userJID(*e.SenderPN, types.EmptyJID).String()
 	}
 	var out []adapter.Event
 	ch := model.Chat{ID: chat, Kind: model.ChatGroup}
@@ -214,7 +240,7 @@ func (acc *account) convertGroupInfo(e *events.GroupInfo) []adapter.Event {
 		}
 		var targets []string
 		for _, j := range jids {
-			id := j.ToNonAD().String()
+			id := acc.canonID(j).String()
 			targets = append(targets, id)
 			out = append(out, adapter.Event{Kind: adapter.EvMember, Member: &adapter.Member{ChatID: chat, UserID: id, Role: r, Left: left}})
 		}
@@ -252,12 +278,17 @@ func (acc *account) convertHistory(e *events.HistorySync) {
 		if err != nil || jid.Server == types.BroadcastServer {
 			continue
 		}
-		if jid.Server == types.HiddenUserServer && conv.GetPnJID() != "" {
-			if p, err := types.ParseJID(conv.GetPnJID()); err == nil {
-				jid = p
+		chatID := jid
+		if isUser(jid) {
+			alt := types.EmptyJID
+			for _, s := range []string{conv.GetLidJID(), conv.GetPnJID()} {
+				if p, err := types.ParseJID(s); s != "" && err == nil && p.Server != jid.Server {
+					alt = p
+				}
 			}
+			chatID = acc.userJID(jid, alt)
 		}
-		ch := model.Chat{ID: jid.String(), Kind: chatKind(jid), Name: conv.GetName(), Archived: conv.GetArchived(), UnreadCount: int64(conv.GetUnreadCount())}
+		ch := model.Chat{ID: chatID.String(), Kind: chatKind(jid), Name: conv.GetName(), Archived: conv.GetArchived(), UnreadCount: int64(conv.GetUnreadCount())}
 		if ch.Name == "" {
 			ch.Name = conv.GetDisplayName()
 		}
@@ -273,11 +304,11 @@ func (acc *account) convertHistory(e *events.HistorySync) {
 			}
 			batch = append(batch, base.MarkBackfill(acc.convertMessage(evt))...)
 			if len(batch) >= 100 {
-				acc.rep.Events(batch...)
+				acc.emit(batch...)
 				batch = batch[:0]
 			}
 		}
-		acc.rep.Events(batch...)
+		acc.emit(batch...)
 	}
 	if len(e.Data.GetPushnames()) > 0 {
 		acc.syncContacts()
@@ -290,34 +321,19 @@ func (acc *account) convertHistory(e *events.HistorySync) {
 func (acc *account) syncContacts() {
 	ctx, cancel := base.Timeout(time.Minute)
 	defer cancel()
-	all, err := acc.cli.Store.Contacts.GetAllContacts(ctx)
+	all, err := acc.allContacts(ctx)
 	if err != nil {
 		acc.rep.Log.Warn("read contacts", "err", err)
 		return
 	}
-	batch := make([]adapter.Event, 0, 100)
-	for jid, ci := range all {
-		if jid.Server != types.DefaultUserServer {
-			continue
+	for start := 0; start < len(all); start += 100 {
+		batch := make([]adapter.Event, 0, 100)
+		for i := start; i < len(all) && i < start+100; i++ {
+			batch = append(batch, adapter.Event{Kind: adapter.EvContact, Contact: &all[i]})
 		}
-		c := contactFromInfo(jid, ci)
-		batch = append(batch, adapter.Event{Kind: adapter.EvContact, Contact: &c})
-		if len(batch) == cap(batch) {
-			acc.rep.Events(batch...)
-			batch = batch[:0]
-		}
+		acc.emit(batch...)
 	}
-	acc.rep.Events(batch...)
 	acc.rep.Log.Info("contacts synced", "count", len(all))
-}
-
-// contactFromInfo maps the device store's contact record.
-func contactFromInfo(jid types.JID, ci types.ContactInfo) model.Contact {
-	jid = jid.ToNonAD()
-	return model.Contact{
-		ID: jid.String(), Handle: phoneOf(jid), Phone: phoneOf(jid), IsContact: ci.FullName != "",
-		Names: model.Names{Alias: ci.FullName, First: ci.FirstName, Profile: firstNonEmpty(ci.PushName, ci.BusinessName)},
-	}
 }
 
 func firstNonEmpty(v ...string) string {

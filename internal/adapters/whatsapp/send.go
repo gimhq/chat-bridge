@@ -43,10 +43,10 @@ func (a *Adapter) SendMessage(ctx context.Context, id string, req adapter.SendRe
 		return model.Message{}, base.PlatformErr("send", err)
 	}
 	chat := to
-	if !resp.Chat.IsEmpty() && resp.Chat.Server != types.HiddenUserServer {
+	if !resp.Chat.IsEmpty() {
 		chat = resp.Chat
 	}
-	return model.Message{ID: resp.ID, ChatID: chat.ToNonAD().String(), Timestamp: resp.Timestamp.UTC(), Content: req.Content, Status: model.MsgSent}, nil
+	return model.Message{ID: resp.ID, ChatID: acc.canonID(chat).String(), Timestamp: resp.Timestamp.UTC(), Content: req.Content, Status: model.MsgSent}, nil
 }
 
 func (acc *account) buildMessage(ctx context.Context, req adapter.SendRequest) (*waE2E.Message, error) {
@@ -226,9 +226,13 @@ func (a *Adapter) DeleteMessage(ctx context.Context, id, chatID, msgID, senderID
 		return err
 	}
 	sender := types.EmptyJID
-	if senderID != "" && acc.cli.Store.ID != nil && senderID != acc.cli.Store.ID.ToNonAD().String() {
-		if sender, err = parseJID(senderID); err != nil {
+	if senderID != "" {
+		s, err := parseJID(senderID)
+		if err != nil {
 			return err
+		}
+		if !acc.isOwn(s) {
+			sender = s
 		}
 	}
 	_, err = acc.cli.SendMessage(ctx, chat, acc.cli.BuildRevoke(chat, sender, msgID))
@@ -313,7 +317,7 @@ func (a *Adapter) ResolveChat(ctx context.Context, id, handle string) (model.Res
 		if err != nil {
 			return model.ResolvedChat{}, err
 		}
-		r := model.ResolvedChat{ChatID: jid.ToNonAD().String(), Kind: chatKind(jid)}
+		r := model.ResolvedChat{ChatID: acc.canonID(jid).String(), Kind: chatKind(jid)}
 		if r.Kind == model.ChatDirect {
 			r.UserID = r.ChatID
 		}
@@ -330,10 +334,7 @@ func (a *Adapter) ResolveChat(ctx context.Context, id, handle string) (model.Res
 	if len(resp) == 0 || !resp[0].IsIn {
 		return model.ResolvedChat{}, adapter.Errorf(adapter.ErrInvalidTarget, "%s is not on WhatsApp", handle)
 	}
-	jid := resp[0].JID.ToNonAD()
-	if jid.Server == types.HiddenUserServer && !resp[0].PhoneNumber.IsEmpty() {
-		jid = resp[0].PhoneNumber.ToNonAD()
-	}
+	jid := acc.userJID(resp[0].JID, resp[0].PhoneNumber)
 	return model.ResolvedChat{ChatID: jid.String(), Kind: model.ChatDirect, UserID: jid.String()}, nil
 }
 
@@ -355,13 +356,13 @@ func (a *Adapter) GetChat(ctx context.Context, id, chatID string) (model.Chat, e
 		if err != nil {
 			return model.Chat{}, base.PlatformErr("group info", err)
 		}
-		return groupChat(g), nil
+		return acc.groupChat(g), nil
 	}
-	ch := model.Chat{ID: jid.ToNonAD().String(), Kind: chatKind(jid)}
-	if ci, err := acc.cli.Store.Contacts.GetContact(ctx, jid.ToNonAD()); err == nil && ci.Found {
-		ch.Name = firstNonEmpty(ci.FullName, ci.PushName, ci.BusinessName)
+	if !isUser(jid) {
+		return model.Chat{ID: jid.ToNonAD().String(), Kind: chatKind(jid)}, nil
 	}
-	return ch, nil
+	c := acc.contactFor(ctx, jid)
+	return model.Chat{ID: c.ID, Kind: model.ChatDirect, Name: firstNonEmpty(c.Names.Alias, c.Names.Profile, c.Names.First)}, nil
 }
 
 // ListContacts returns the synced address book.
@@ -370,16 +371,9 @@ func (a *Adapter) ListContacts(ctx context.Context, id string) ([]model.Contact,
 	if err != nil {
 		return nil, err
 	}
-	all, err := acc.cli.Store.Contacts.GetAllContacts(ctx)
+	out, err := acc.allContacts(ctx)
 	if err != nil {
 		return nil, base.PlatformErr("contacts", err)
-	}
-	out := make([]model.Contact, 0, len(all))
-	for jid, ci := range all {
-		if jid.Server != types.DefaultUserServer {
-			continue
-		}
-		out = append(out, contactFromInfo(jid, ci))
 	}
 	return out, nil
 }

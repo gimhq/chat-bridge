@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-09-14 01:45 [progress]
+
+Task `20260913-2319-telegram-bridgev2-connector` (plan of the same id): mautrix-telegram's bridgev2 connector runs as a second Telegram instance next to the gotd adapter.
+
+- Connector host: `WithInstance` (adapter instance id), `WithNetworkDefaults` (server-wide connector YAML between the example config and the account's `config.network`), optional `WithMaxFileSize`; the fixed 100 MB cap is gone (connector capabilities decide, `SetMaxFileSize` gets an unbounded value), uploads above an explicit cap fail with `bridgev2.ErrMediaTooLarge`, and `UploadMediaStream` streams the connector's temp file into the sink instead of buffering it
+- `internal/adapters/tgbridge` (build tag `tgbridge`, cgo for mautrix-telegram's bundled libwebp only): platform `telegram`, instance `bridgev2`, `api_id` / `api_hash` from `adapters.telegram.*`, animated stickers unconverted; dependency `go.mau.fi/mautrix-telegram v0.2608.0` (its own gotd fork, no conflict with `github.com/gotd/td`)
+- Config `adapters.telegram.bridgev2` (default `false`) registers the instance, so `POST /accounts` without `adapter` keeps working for single-instance deployments; `cmd/chat-bridge` registers tagged adapters from `adapters_<tag>.go` `init()` functions (`adapters_default.go` removed)
+- Build: Dockerfile and `.golangci.yml` carry `tgbridge`; gate line for the tag in `AGENTS.md` and README; release binaries unchanged (pure Go)
+- Verified: host unit tests (instance, config precedence, upload cap and streaming; race-clean), tagged vet and a real-connector test (initialises against the virtual homeserver), pure-Go gate (gofmt, vet, tests, build), `docker build --target test .` with `goolm,signal,tgbridge`; smoke run with the flag on: `GET /platforms` lists `telegram` instances `bridgev2` and `local`, `POST /accounts` without `adapter` answers 400, a `bridgev2` account's `qr` login returns `tg://login?token=…`; stripped binary 102.6 MB (66.5 MB without the tag). End-to-end messaging needs a real Telegram login
+- Docs: `adapter-protocol.md` §11 (options, Telegram), `api.md` §2.2 and platform table, `chat-bridge.example.yaml`, README
+
+## 2026-09-13 23:40 [progress]
+
+Task `20260913-2243-whatsapp-lid-and-new-types` (plan of the same id): WhatsApp addresses users by LID, like mautrix-whatsapp; newer message types are mapped.
+
+- Adapter contract: event kind `identity` (`user_id` → `new_id`) and optional `IdentityResolver` / wire method `identity.resolve`; the fake and the remote shim implement both
+- Store: `ReID` moves a user and the direct chat with them to a new id in one transaction (contact merged with local alias, blocked flag and person link kept; chat merged, duplicate messages dropped, unread summed, last message recomputed; senders, members, reactions, receipts, mentions, system notices, requests, self id rewritten) and skips ids it never stored; schema v6 indexes `messages(account_id, sender_id)` and `chat_members(account_id, user_id)`
+- Core: `identity` events re-ID inside the ingest transaction and emit `chat.updated` (with `merged_from`) and `contact.updated`, then auto-link; after every `connected` status the core hands the account's stored user and direct-chat ids to `identity.resolve` and re-IDs the answer before the contact sync
+- WhatsApp: every emitted user and DM id resolves to the LID when whatsmeow's LID map knows it (event alternates first, the account's own LID for itself), including history sync, receipts, typing, presence, members, group notices, mentions, calls, invites, push names, `ResolveChat`, `GetChat` and send results; the first phone→LID sighting in a session emits `identity`; contacts are one per user with the phone from the phone form and names merged from both whatsmeow rows (LID-only rows no longer dropped); `CanonicalIDs` answers through `GetManyLIDsForPNs` and re-emits stored LID users with the phone number the LID map knows (contacts stored before the mapping arrived had none)
+- WhatsApp message types: HD dual uploads are stored under the parent id (a duplicate when the parent exists), motion-photo children, album headers and history bundles are skipped, templates / highly structured / interactive business messages become text, `messageHistoryNotice` becomes system `history_shared`, `MASK_LINKED_DEVICES` placeholders become system `primary_device_only`; UI labels for both kinds
+- Unnamed direct chats take their counterpart's contact name when read (chat list, chat, person chats, `chat.new` / `chat.updated`); the name is not stored, so it follows the contact
+- Verified on the dev account: 89 phone ids re-IDed at connect, 82 of 108 chats and all senders except WhatsApp's `0@s.whatsapp.net` are LIDs, `235978975346820@lid` carries +66995618240 and the address-book name; `api.md` (system kinds, `chat.updated`), `adapter-protocol.md` (§4, §5.3, §10), `storage.md` (schema v6) updated
+
+## 2026-09-13 22:45 [progress]
+
+Task `20260913-2243-telegram-default-app` closed: built-in Telegram credentials were dropped before commit at the user's request.
+
+- Credentials stay server-wide configuration (`CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID|HASH` or `adapters.telegram.*`), inherited by every account; `api.md` §2.2 and platform table, `chat-bridge.example.yaml`, README say so explicitly
+
+Task `20260913-2243-whatsapp-lid-and-new-types` opened: LID chats and senders are not resolved to phone numbers, and album / HD-image / template / linked-device placeholder messages render as unsupported (findings in the task file).
+
 ## 2026-09-13 22:40 [progress]
 
 Task `20260913-2234-release-workflow`: GitHub release workflow.

@@ -441,3 +441,13 @@ func (a *Adapter) AnswerRequest(ctx context.Context, id string, ans adapter.Requ
 	return a.call(ctx, "request.answer", map[string]any{"account_id": id, "request_key": ans.Key, "kind": ans.Kind, "chat_id": ans.ChatID,
 		"from_id": ans.FromID, "platform_ref": ans.PlatformRef, "action": ans.Action, "reason": ans.Reason}, nil)
 }
+
+// CanonicalIDs forwards identity.resolve; an adapter without the method answers -32601, which the
+// core treats as "nothing changed".
+func (a *Adapter) CanonicalIDs(ctx context.Context, id string, ids []string) (map[string]string, error) {
+	var out struct {
+		IDs map[string]string `json:"ids"`
+	}
+	err := a.call(ctx, "identity.resolve", map[string]any{"account_id": id, "ids": ids}, &out)
+	return out.IDs, err
+}

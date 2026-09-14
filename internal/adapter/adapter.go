@@ -121,6 +121,9 @@ const (
 	EvPresence      = "presence"
 	EvPlatform      = "platform_event"
 	EvRequest       = "request"
+	// EvIdentity: the platform now addresses the user or direct chat UserID as NewID (WhatsApp
+	// phone number → LID). The core moves everything stored under the old id.
+	EvIdentity = "identity"
 )
 
 // Event is one adapter-side occurrence. Which fields apply depends on Kind.
@@ -160,6 +163,9 @@ type Event struct {
 
 	// request.
 	Request *Request
+
+	// identity: UserID is the old id.
+	NewID string
 }
 
 // Request is an invite, join request, or call waiting for the owner. Key is stable per account
@@ -358,4 +364,11 @@ type RequestAnswer struct {
 // core offers the actions a request kind allows whenever the adapter implements it.
 type RequestAnswerer interface {
 	AnswerRequest(ctx context.Context, id string, a RequestAnswer) error
+}
+
+// IdentityResolver maps stored user and direct-chat ids to the ids the platform uses now. The
+// core calls it when an account connects and re-IDs what it returns; ids that did not change are
+// left out of the result. No capability.
+type IdentityResolver interface {
+	CanonicalIDs(ctx context.Context, id string, ids []string) (map[string]string, error)
 }

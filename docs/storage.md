@@ -372,6 +372,7 @@ than it knows. No down migrations. Adapter-private databases are versioned by th
 | 3 | `messages_fts` (trigram FTS5, external content) with its triggers, rebuilt over existing rows |
 | 4 | `requests` (invites, join requests, calls) |
 | 5 | `persons`, `person_links`, `person_unlinks`; `contacts.phone_norm` (digits only, at least 7, indexed) backfilled from `phone` |
+| 6 | indexes `messages(account_id, sender_id)` and `chat_members(account_id, user_id)` so an identity change (adapter `identity` event, `adapter-protocol.md` §5.3) finds the rows to re-ID without scanning |
 
 ## 9. Sizing
 

@@ -25,7 +25,8 @@ FROM golang:1.26-alpine AS build
 RUN apk add --no-cache build-base zlib-dev
 WORKDIR /src
 
-# cgo is needed for libsignal only; everything else stays pure Go (`goolm` for Matrix E2EE).
+# cgo is needed for libsignal and mautrix-telegram's bundled libwebp (`tgbridge`); everything else
+# stays pure Go (`goolm` for Matrix E2EE).
 ENV CGO_ENABLED=1 GOTOOLCHAIN=local GOFLAGS=-trimpath LIBRARY_PATH=/usr/local/lib
 COPY --from=libsignal /libsignal_ffi.a /usr/local/lib/
 
@@ -39,13 +40,13 @@ COPY --from=web /src/internal/webui/dist ./internal/webui/dist
 FROM build AS test
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go vet -tags goolm,signal ./... && go test -tags goolm,signal ./...
+    go vet -tags goolm,signal,tgbridge ./... && go test -tags goolm,signal,tgbridge ./...
 
 FROM build AS compile
 ARG VERSION=dev
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    go build -tags goolm,signal -ldflags="-s -w -X main.version=${VERSION}" -o /out/chat-bridge ./cmd/chat-bridge \
+    go build -tags goolm,signal,tgbridge -ldflags="-s -w -X main.version=${VERSION}" -o /out/chat-bridge ./cmd/chat-bridge \
     && mkdir -p /empty
 
 # ---- runtime stage ------------------------------------------------------------

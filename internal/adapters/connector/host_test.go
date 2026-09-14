@@ -2,9 +2,12 @@ package connector
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +21,7 @@ import (
 	"maunium.net/go/mautrix/event"
 
 	"gimhq/chat-bridge/internal/adapter"
+	"gimhq/chat-bridge/internal/adapters/base"
 	"gimhq/chat-bridge/internal/model"
 )
 
@@ -393,5 +397,89 @@ func TestHostedConnectorEventConversions(t *testing.T) {
 	})
 	if err := host.Stop(ctx); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestHostInstance(t *testing.T) {
+	newFake := func() bridgev2.NetworkConnector { return &fakeNet{} }
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if info := New(log, "fakenet", newFake).Info(); info.Instance != "" {
+		t.Fatalf("default instance: %q", info.Instance)
+	}
+	if info := New(log, "fakenet", newFake, WithInstance("bridgev2")).Info(); info.Instance != "bridgev2" {
+		t.Fatalf("instance: %q", info.Instance)
+	}
+}
+
+// cfgNet is a connector with a YAML config, like mautrix's own.
+type cfgNet struct {
+	fakeNet
+	cfg struct {
+		APIID   int    `yaml:"api_id"`
+		APIHash string `yaml:"api_hash"`
+		Device  string `yaml:"device"`
+	}
+}
+
+func (c *cfgNet) GetConfig() (string, any, configupgrade.Upgrader) {
+	return "api_id: 1\napi_hash: example\ndevice: example\n", &c.cfg, configupgrade.NoopUpgrader
+}
+
+func TestNetworkConfigPrecedence(t *testing.T) {
+	// Example < host defaults < the account's `network`.
+	net := &cfgNet{}
+	if err := loadNetworkConfig(net, "api_id: 2\napi_hash: server\n", json.RawMessage(`{"network":{"api_hash":"account"}}`)); err != nil {
+		t.Fatal(err)
+	}
+	if net.cfg.APIID != 2 || net.cfg.APIHash != "account" || net.cfg.Device != "example" {
+		t.Fatalf("config: %+v", net.cfg)
+	}
+	// Defaults apply without an account overlay.
+	net = &cfgNet{}
+	if err := loadNetworkConfig(net, "api_hash: server\n", nil); err != nil || net.cfg.APIID != 1 || net.cfg.APIHash != "server" {
+		t.Fatalf("defaults only: %+v %v", net.cfg, err)
+	}
+}
+
+func TestUploadLimitAndStreaming(t *testing.T) {
+	ctx := context.Background()
+	sink := &recSink{}
+	acc := &account{host: &Adapter{maxFileSize: 4}, rep: base.Reporter{Sink: sink, ID: "acc1"}, stored: map[string]model.Attachment{}}
+	in := &virtualIntent{vm: &virtualMatrix{acc: acc}}
+
+	if _, _, err := in.UploadMedia(ctx, "", []byte("12345"), "a.bin", "application/octet-stream"); !errors.Is(err, bridgev2.ErrMediaTooLarge) {
+		t.Fatalf("oversized upload: %v", err)
+	}
+	called := false
+	_, _, err := in.UploadMediaStream(ctx, "", 5, false, func(io.Writer) (*bridgev2.FileStreamResult, error) {
+		called = true
+		return nil, nil
+	})
+	if !errors.Is(err, bridgev2.ErrMediaTooLarge) || called {
+		t.Fatalf("oversized declared stream: %v (callback called: %v)", err, called)
+	}
+	// An undeclared size is checked after the callback wrote the file.
+	_, _, err = in.UploadMediaStream(ctx, "", 0, false, func(w io.Writer) (*bridgev2.FileStreamResult, error) {
+		_, err := w.Write([]byte("12345"))
+		return nil, err
+	})
+	if !errors.Is(err, bridgev2.ErrMediaTooLarge) {
+		t.Fatalf("oversized undeclared stream: %v", err)
+	}
+	// Within the limit the stream reaches the sink with the callback's name and type.
+	uri, _, err := in.UploadMediaStream(ctx, "", 4, false, func(w io.Writer) (*bridgev2.FileStreamResult, error) {
+		_, err := w.Write([]byte("1234"))
+		return &bridgev2.FileStreamResult{FileName: "b.png", MimeType: "image/png"}, err
+	})
+	if err != nil || !strings.HasPrefix(string(uri), "mxc://"+serverName+"/") {
+		t.Fatalf("stream: %s %v", uri, err)
+	}
+	if att := acc.stored[mediaIDOf(uri)]; att.Size != 4 || att.Mime != "image/png" {
+		t.Fatalf("stored: %+v", att)
+	}
+	// Without WithMaxFileSize the host rejects nothing.
+	acc.host.maxFileSize = 0
+	if _, _, err := in.UploadMedia(ctx, "", []byte("12345"), "a.bin", ""); err != nil {
+		t.Fatalf("unlimited upload: %v", err)
 	}
 }

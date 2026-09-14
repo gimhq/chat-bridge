@@ -38,3 +38,6 @@ Each task is a single line linking to its detail file. All detailed information 
 - [x] [**20260913-1903-web-ui-and-requests Embedded web UI; requests (invites, calls)**](20260913-1903-web-ui-and-requests.md) `P1`
 - [x] [**20260913-2034-ignore-call-requests Ignore calls instead of rejecting them**](20260913-2034-ignore-call-requests.md) `P1`
 - [x] [**20260913-2234-release-workflow Publish on GitHub; release binaries from a workflow**](20260913-2234-release-workflow.md) `P2`
+- [~] [**20260913-2243-telegram-default-app Built-in Telegram application credentials**](20260913-2243-telegram-default-app.md) `P2`
+- [x] [**20260913-2243-whatsapp-lid-and-new-types WhatsApp: resolve LIDs to phone numbers; map newer message types**](20260913-2243-whatsapp-lid-and-new-types.md) `P1`
+- [x] [**20260913-2319-telegram-bridgev2-connector Host mautrix-telegram's bridgev2 connector alongside the gotd adapter**](20260913-2319-telegram-bridgev2-connector.md) `P2`

@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"gimhq/chat-bridge/internal/adapter"
 	"gimhq/chat-bridge/internal/adapters/matrix"
 	"gimhq/chat-bridge/internal/adapters/remote"
 	"gimhq/chat-bridge/internal/adapters/telegram"
@@ -28,6 +29,10 @@ import (
 
 // version is set at build time via -ldflags "-X main.version=...".
 var version = "dev"
+
+// extraAdapters are appended by build-tagged files (adapters_<tag>.go); a constructor returns nil
+// when its adapter is disabled by config.
+var extraAdapters []func(*slog.Logger, config.Config) adapter.Adapter
 
 func main() {
 	if err := run(); err != nil {
@@ -74,8 +79,10 @@ func run() error {
 	c.Register(whatsapp.New(log.With("adapter", "whatsapp")))
 	c.Register(telegram.New(log.With("adapter", "telegram"), telegram.Defaults{AppID: cfg.Adapters.Telegram.APIID, AppHash: cfg.Adapters.Telegram.APIHash}))
 	c.Register(matrix.New(log.With("adapter", "matrix")))
-	for _, a := range extraAdapters(log) {
-		c.Register(a)
+	for _, extra := range extraAdapters {
+		if a := extra(log, cfg); a != nil {
+			c.Register(a)
+		}
 	}
 	if err := c.Start(ctx); err != nil {
 		return err

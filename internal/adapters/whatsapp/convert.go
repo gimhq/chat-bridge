@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode"
 
 	"go.mau.fi/whatsmeow"
 	"go.mau.fi/whatsmeow/proto/waE2E"
@@ -22,21 +23,6 @@ import (
 type remoteRef struct {
 	Type  string          `json:"type"`
 	Proto json.RawMessage `json:"proto"`
-}
-
-// pn prefers the phone-number form of a JID over its LID.
-func pn(j, alt types.JID) types.JID {
-	if j.Server == types.HiddenUserServer && !alt.IsEmpty() {
-		return alt.ToNonAD()
-	}
-	return j.ToNonAD()
-}
-
-func chatOf(src types.MessageSource) types.JID {
-	if src.IsGroup {
-		return src.Chat
-	}
-	return pn(src.Chat, src.RecipientAlt)
 }
 
 func chatKind(jid types.JID) string {
@@ -119,14 +105,36 @@ func platformType(m *waE2E.Message) string {
 // convertMessage maps one inbound WhatsApp message to adapter events.
 func (acc *account) convertMessage(e *events.Message) []adapter.Event {
 	info := e.Info
-	chat := chatOf(info.MessageSource)
-	if chat == types.StatusBroadcastJID {
+	if info.Chat == types.StatusBroadcastJID {
 		return nil
 	}
-	sender := pn(info.Sender, info.SenderAlt)
+	chat := acc.chatJID(info.MessageSource)
+	sender := acc.userJID(info.Sender, info.SenderAlt)
 	msg, viewOnce := unwrap(e.Message)
 	if msg == nil {
 		return nil
+	}
+	id := info.ID
+	if child := msg.GetAssociatedChildMessage().GetMessage(); child != nil {
+		assoc := associationOf(e.Message, msg)
+		switch assoc.GetAssociationType() {
+		case waE2E.MessageAssociation_MOTION_PHOTO:
+			return nil
+		case waE2E.MessageAssociation_HD_IMAGE_DUAL_UPLOAD, waE2E.MessageAssociation_HD_VIDEO_DUAL_UPLOAD:
+			// The HD copy of media already sent as the parent: stored under the parent id it is a
+			// duplicate, unless the parent never arrived.
+			if parent := assoc.GetParentMessageKey().GetID(); parent != "" {
+				id = parent
+			}
+		}
+		inner, vo := unwrap(child)
+		if inner == nil {
+			return nil
+		}
+		msg, viewOnce = inner, viewOnce || vo
+	}
+	if msg.AlbumMessage != nil || msg.MessageHistoryBundle != nil {
+		return nil // an album header precedes its media; a bundle carries nothing to show
 	}
 	at := info.Timestamp.UTC()
 
@@ -152,19 +160,33 @@ func (acc *account) convertMessage(e *events.Message) []adapter.Event {
 		}
 	}
 
-	content, ok := convertContent(msg, info.ID)
+	if n := msg.MessageHistoryNotice; n != nil {
+		md := n.GetMessageHistoryMetadata()
+		sys := model.System{Kind: "history_shared", Actor: sender.String(), Value: fmt.Sprint(md.GetMessageCount())}
+		for _, r := range md.GetHistoryReceivers() {
+			if jid, err := types.ParseJID(r); err == nil {
+				sys.Targets = append(sys.Targets, acc.canonID(jid).String())
+			}
+		}
+		return acc.systemMessage(info, chat, sender, sys, nil)
+	}
+	if msg.PlaceholderMessage != nil && msg.PlaceholderMessage.GetType() == waE2E.PlaceholderMessage_MASK_LINKED_DEVICES {
+		// The phone keeps this message (e.g. a one-time code) off linked devices.
+		return acc.systemMessage(info, chat, sender, model.System{Kind: "primary_device_only", Actor: sender.String()}, nil)
+	}
+	content, ok := convertContent(msg, id)
 	if !ok {
 		content = model.Content{Type: model.ContentUnsupported, Unsupported: &model.Unsupported{PlatformType: platformType(msg)}}
 	}
 	m := model.Message{
-		ID: info.ID, ChatID: chat.String(), Sender: model.Sender{ID: sender.String()}, FromMe: info.IsFromMe, Timestamp: at, Content: content,
+		ID: id, ChatID: chat.String(), Sender: model.Sender{ID: sender.String()}, FromMe: info.IsFromMe, Timestamp: at, Content: content,
 	}
 	if ci := contextOf(msg); ci != nil {
 		m.ReplyTo = ci.GetStanzaID()
 		m.Forwarded = ci.GetIsForwarded()
 		for _, j := range ci.GetMentionedJID() {
 			if jid, err := types.ParseJID(j); err == nil {
-				m.Mentions = append(m.Mentions, jid.ToNonAD().String())
+				m.Mentions = append(m.Mentions, acc.canonID(jid).String())
 			}
 		}
 		if exp := ci.GetExpiration(); exp > 0 {
@@ -182,7 +204,8 @@ func (acc *account) convertMessage(e *events.Message) []adapter.Event {
 	if !info.IsGroup && !info.IsFromMe && info.PushName != "" {
 		ev.Chat.Name = info.PushName
 	}
-	ev.Sender = &model.Contact{ID: sender.String(), Handle: phoneOf(sender), Phone: phoneOf(sender), Names: model.Names{Profile: info.PushName}}
+	phone := phoneOf(acc.phoneJID(info.Sender, info.SenderAlt))
+	ev.Sender = &model.Contact{ID: sender.String(), Handle: phone, Phone: phone, Names: model.Names{Profile: info.PushName}}
 	return []adapter.Event{ev}
 }
 
@@ -256,6 +279,12 @@ func convertContent(m *waE2E.Message, mediaID string) (model.Content, bool) {
 			poll.Options = append(poll.Options, model.PollOption{Text: o.GetOptionName()})
 		}
 		return model.Content{Type: model.ContentPoll, Text: p.GetName(), Poll: poll}, true
+	case m.TemplateMessage != nil:
+		return textContent(templateText(m.TemplateMessage))
+	case m.HighlyStructuredMessage.GetHydratedHsm() != nil:
+		return textContent(templateText(m.HighlyStructuredMessage.GetHydratedHsm()))
+	case m.InteractiveMessage != nil:
+		return textContent(interactiveText(m.InteractiveMessage))
 	case m.SenderKeyDistributionMessage != nil && len(m.ProtoReflect().GetUnknown()) == 0 && onlySenderKey(m):
 		return model.Content{}, false
 	}
@@ -271,6 +300,71 @@ func onlySenderKey(m *waE2E.Message) bool {
 		return true
 	})
 	return n == 1
+}
+
+// associationOf returns the message association of the unwrapped or the outer message.
+func associationOf(outer, inner *waE2E.Message) *waE2E.MessageAssociation {
+	if a := inner.GetMessageContextInfo().GetMessageAssociation(); a != nil {
+		return a
+	}
+	return outer.GetMessageContextInfo().GetMessageAssociation()
+}
+
+func textContent(text string) (model.Content, bool) {
+	if text == "" {
+		return model.Content{}, false
+	}
+	return model.Content{Type: model.ContentText, Text: text}, true
+}
+
+// templateText flattens a business template: title, body, buttons, footer.
+func templateText(t *waE2E.TemplateMessage) string {
+	tpl := t.GetHydratedTemplate()
+	if tpl == nil {
+		tpl = t.GetHydratedFourRowTemplate()
+	}
+	if tpl == nil {
+		return interactiveText(t.GetInteractiveMessageTemplate())
+	}
+	var buttons []string
+	for _, b := range tpl.GetHydratedButtons() {
+		switch {
+		case b.GetQuickReplyButton() != nil:
+			buttons = append(buttons, "["+b.GetQuickReplyButton().GetDisplayText()+"]")
+		case b.GetUrlButton() != nil:
+			buttons = append(buttons, b.GetUrlButton().GetDisplayText()+": "+b.GetUrlButton().GetURL())
+		case b.GetCallButton() != nil:
+			buttons = append(buttons, b.GetCallButton().GetDisplayText()+": "+b.GetCallButton().GetPhoneNumber())
+		}
+	}
+	return joinParts(tpl.GetHydratedTitleText(), tpl.GetHydratedContentText(), strings.Join(buttons, "\n"), tpl.GetHydratedFooterText())
+}
+
+// interactiveText flattens an interactive business message: header, body, buttons, footer.
+func interactiveText(m *waE2E.InteractiveMessage) string {
+	if m == nil {
+		return ""
+	}
+	var buttons []string
+	for _, b := range m.GetNativeFlowMessage().GetButtons() {
+		if name := b.GetName(); name != "" {
+			buttons = append(buttons, "["+name+"]")
+		}
+	}
+	header := joinParts(m.GetHeader().GetTitle(), m.GetHeader().GetSubtitle())
+	return joinParts(header, m.GetBody().GetText(), strings.Join(buttons, " "), m.GetFooter().GetText())
+}
+
+// joinParts joins the non-blank parts with blank lines. Business templates pad with Hangul
+// fillers (U+3164), which count as blank.
+func joinParts(parts ...string) string {
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimFunc(p, func(r rune) bool { return unicode.IsSpace(r) || r == 'ㅤ' }); p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "\n\n")
 }
 
 func mediaContent(t, caption, mediaID string, dl proto.Message, mime, fileName string, size int64, w, h int, durMs int64) model.Content {
