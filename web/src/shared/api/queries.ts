@@ -16,6 +16,8 @@ import type {
   RequestState,
   ResolvedChat,
   SendRequest,
+  Token,
+  TokenScope,
   Webhook,
 } from './types'
 import { keepPreviousData, useInfiniteQuery, useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -42,6 +44,7 @@ export const qk = {
   contactMessages: (a: string, u: string) => ['contact-messages', a, u] as const,
   requests: (a: string) => ['requests', a] as const,
   webhooks: ['webhooks'] as const,
+  tokens: ['tokens'] as const,
   persons: ['persons'] as const,
   person: (p: string) => ['person', p] as const,
   personMessages: (p: string) => ['person-messages', p] as const,
@@ -361,6 +364,30 @@ export function useWebhookActions() {
       onSuccess: refresh,
     }),
     remove: useMutation({ mutationFn: (id: string) => api<void>(`/webhooks/${seg(id)}`, { method: 'DELETE' }), onSuccess: refresh }),
+  }
+}
+
+// --- tokens ---
+
+export function useTokens() {
+  return useQuery({ queryKey: qk.tokens, queryFn: async () => (await api<{ tokens: Token[] }>('/tokens')).tokens ?? [] })
+}
+
+export interface TokenInput {
+  name: string
+  scope: TokenScope
+}
+
+export function useTokenActions() {
+  const qc = useQueryClient()
+  const refresh = () => qc.invalidateQueries({ queryKey: qk.tokens })
+  return {
+    create: useMutation({ mutationFn: (body: TokenInput) => api<Token>('/tokens', { method: 'POST', body }), onSuccess: refresh }),
+    patch: useMutation({
+      mutationFn: ({ id, ...body }: TokenInput & { id: string }) => api<Token>(`/tokens/${seg(id)}`, { method: 'PATCH', body }),
+      onSuccess: refresh,
+    }),
+    remove: useMutation({ mutationFn: (id: string) => api<void>(`/tokens/${seg(id)}`, { method: 'DELETE' }), onSuccess: refresh }),
   }
 }
 

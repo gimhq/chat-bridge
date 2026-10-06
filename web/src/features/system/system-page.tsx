@@ -14,6 +14,7 @@ import { Spinner } from '@/shared/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/shared/components/ui/table'
 import { formatTime, formatUptime } from '@/shared/lib/format'
 import { errorMessage } from '@/shared/lib/http'
+import { TokensCard } from './tokens-card'
 
 export function SystemPage() {
   const status = useStatus()
@@ -21,7 +22,7 @@ export function SystemPage() {
   const s = status.data
   return (
     <div className="flex h-full flex-col overflow-auto">
-      <PageHeader title="系统" description="服务状态、已注册的平台适配器和 webhook 订阅。" />
+      <PageHeader title="系统" description="服务状态、已注册的平台适配器、访问令牌和 webhook 订阅。" />
       <div className="grid gap-4 p-6">
         <Card>
           <CardHeader>
@@ -84,6 +85,7 @@ export function SystemPage() {
             </Table>
           </CardContent>
         </Card>
+        <TokensCard />
         <WebhooksCard />
       </div>
     </div>

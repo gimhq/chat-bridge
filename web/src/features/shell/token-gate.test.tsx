@@ -25,4 +25,13 @@ describe('tokenGate', () => {
     await waitFor(() => expect(getToken()).toBe('secret-1'))
     expect(new Headers(fetchSpy.mock.calls[1]![1]!.headers).get('Authorization')).toBe('Bearer secret-1')
   })
+
+  it('explains that a scoped token cannot sign in', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('{}', { status: 403 }))
+    render(<TokenGate />)
+    fireEvent.change(screen.getByLabelText('访问令牌'), { target: { value: 'cbt_scoped' } })
+    fireEvent.click(screen.getByRole('button', { name: '进入' }))
+    expect(await screen.findByText(/管理界面需要管理员令牌/)).toBeInTheDocument()
+    expect(getToken()).toBe('')
+  })
 })

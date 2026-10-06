@@ -22,6 +22,8 @@ export function TokenGate() {
       const res = await fetch(buildUrl('/status'), { headers: { Authorization: `Bearer ${value.trim()}` } })
       if (res.status === 401)
         setError('令牌无效')
+      else if (res.status === 403)
+        setError('这是受限令牌；管理界面需要管理员令牌（server.token）')
       else if (!res.ok)
         setError(`服务器返回 ${res.status}`)
       else

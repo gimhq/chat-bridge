@@ -298,3 +298,21 @@ export interface PersonSuggestion {
 
 /** Paged list envelope: `{<key>: T[], next_cursor?}`. */
 export type Page<K extends string, T> = { [P in K]: T[] } & { next_cursor?: string }
+
+/** What a scoped token may reach (docs/api.md §4.11). */
+export interface TokenScope {
+  persons: string[]
+  contacts: { account_id: string, user_id: string }[]
+  chats: { account_id: string, chat_id: string }[]
+  read_only: boolean
+}
+
+/** A scoped API token; `token`, the secret, is only present in the answer to its creation. */
+export interface Token {
+  id: string
+  name: string
+  scope: TokenScope
+  created_at: string
+  last_used_at: string | null
+  token?: string
+}
