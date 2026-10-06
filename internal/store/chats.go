@@ -158,6 +158,8 @@ type ChatFilter struct {
 	Archived *bool
 	Tag      string
 	Person   string
+	// Only limits the list to these chat ids (scoped tokens).
+	Only Only
 }
 
 // ListChats pages chats by recent activity. The cursor is "<last_message_ts>:<id>".
@@ -179,6 +181,10 @@ func (s *Store) ListChats(ctx context.Context, accountID string, f ChatFilter, c
 	if f.Person != "" {
 		where += ` AND ` + chatPersonExpr + ` = ?`
 		args = append(args, f.Person)
+	}
+	if cond, a := f.Only.clause("id"); cond != "" {
+		where += cond
+		args = append(args, a...)
 	}
 	if cursor != "" {
 		ts, id, ok := splitCursor(cursor)

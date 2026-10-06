@@ -17,6 +17,12 @@ const uploadTTL = time.Hour
 
 // Upload stores consumer bytes as an unreferenced upload (media_id upl_…).
 func (c *Core) Upload(ctx context.Context, accountID string, r io.Reader, meta adapter.MediaMeta) (model.Attachment, error) {
+	if err := c.allowWrite(ctx); err != nil {
+		return model.Attachment{}, err
+	}
+	if err := c.allowAccount(ctx, accountID); err != nil {
+		return model.Attachment{}, err
+	}
 	if _, err := c.st.GetAccount(ctx, accountID); errors.Is(err, store.ErrNotFound) {
 		return model.Attachment{}, errNotFound("account")
 	}
@@ -53,6 +59,9 @@ func (c *Core) GetMedia(ctx context.Context, id string) (MediaFile, error) {
 	if err != nil {
 		return MediaFile{}, err
 	}
+	if err := c.allowMedia(ctx, md); err != nil {
+		return MediaFile{}, err
+	}
 	mf := MediaFile{Attachment: md.Attachment()}
 	if md.State == model.MediaReady && md.SHA256 != "" {
 		mf.Path = c.blobs.Path(md.SHA256)
@@ -70,6 +79,9 @@ func (c *Core) FetchMedia(ctx context.Context, id string) (model.Attachment, err
 	if err != nil {
 		return model.Attachment{}, err
 	}
+	if err := c.allowMedia(ctx, md); err != nil {
+		return model.Attachment{}, err
+	}
 	if md.State == model.MediaReady || md.State == model.MediaPending {
 		return md.Attachment(), nil
 	}
@@ -83,7 +95,7 @@ func (c *Core) FetchMedia(ctx context.Context, id string) (model.Attachment, err
 	if err := c.st.UpsertMedia(ctx, md); err != nil {
 		return model.Attachment{}, err
 	}
-	go c.fetchMedia(md.AccountID, id)
+	go c.fetchMedia(md.AccountID, id) //nolint:gosec // G118: the download outlives the request
 	return md.Attachment(), nil
 }
 

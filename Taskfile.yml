@@ -1,0 +1,53 @@
+version: "3"
+
+# Mirrors the quality gates in README.md. `goolm` is mandatory (pure-Go olm for Matrix E2EE).
+vars:
+  TAGS: goolm
+
+tasks:
+  fmt:
+    desc: fail when a file is not gofmt-formatted
+    cmds:
+      - test -z "$(gofmt -l .)"
+  vet:
+    cmds:
+      - go vet -tags {{.TAGS}} ./...
+  lint:
+    cmds:
+      - golangci-lint run
+  test:
+    cmds:
+      - go test -tags {{.TAGS}} -cover ./...
+  build:
+    cmds:
+      - go build -tags {{.TAGS}} ./...
+  tidy-check:
+    desc: fail when go mod tidy would change go.mod or go.sum
+    cmds:
+      - go mod tidy
+      - git diff --exit-code go.mod go.sum
+  tgbridge:
+    desc: gates for the bridgev2 Telegram instance (needs a C compiler)
+    cmds:
+      - go vet -tags {{.TAGS}},tgbridge ./...
+      - go test -tags {{.TAGS}},tgbridge ./internal/adapters/tgbridge/
+      - go build -tags {{.TAGS}},tgbridge ./...
+  web:
+    desc: web UI gates; the build writes internal/webui/dist
+    dir: web
+    cmds:
+      - bun install --frozen-lockfile
+      - bun run lint
+      - bun run typecheck
+      - bun run test
+      - bun run build
+  check:
+    desc: run every Go gate in order
+    cmds:
+      - task: fmt
+      - task: vet
+      - task: lint
+      - task: test
+      - task: build
+      - task: tidy-check
+      - task: tgbridge

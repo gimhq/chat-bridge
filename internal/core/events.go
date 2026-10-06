@@ -46,9 +46,23 @@ func (c *Core) ListEvents(ctx context.Context, cursor string, f store.EventFilte
 	if err != nil {
 		return nil, "", errInvalid("bad cursor")
 	}
+	sc, err := c.scopeOf(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if sc != nil {
+		f.Scope = sc.events()
+	}
 	evs, err := c.st.ListEvents(ctx, after, f, limit)
 	if err != nil {
 		return nil, "", err
+	}
+	if sc != nil {
+		for i := range evs {
+			if evs[i].Type == model.EvAccountStatus {
+				evs[i].Data = listViewOnly(evs[i].Data)
+			}
+		}
 	}
 	next := cursor
 	if len(evs) > 0 {
@@ -258,6 +272,9 @@ type Status struct {
 
 var started = time.Now()
 
+// Ready reports whether the store answers; it backs GET /readyz.
+func (c *Core) Ready(ctx context.Context) error { return c.st.Ping(ctx) }
+
 // Status builds the process view.
 func (c *Core) Status(ctx context.Context, version string) (Status, error) {
 	accs, err := c.ListAccounts(ctx)
@@ -268,4 +285,18 @@ func (c *Core) Status(ctx context.Context, version string) (Status, error) {
 		accs = []model.Account{}
 	}
 	return Status{Version: version, UptimeS: int64(time.Since(started).Seconds()), Accounts: accs, EventsCursor: c.LastEventID(ctx)}, nil
+}
+
+// listViewOnly strips the fields of an account payload that the list view leaves out, so a
+// scoped token never sees configuration or device detail in account.status events.
+func listViewOnly(data json.RawMessage) json.RawMessage {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(data, &m) != nil {
+		return json.RawMessage("{}")
+	}
+	delete(m, "config")
+	delete(m, "device")
+	delete(m, "stats")
+	b, _ := json.Marshal(m)
+	return b
 }

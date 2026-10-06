@@ -183,9 +183,9 @@ func role(p types.GroupParticipant) string {
 
 // groupChat maps whatsmeow group metadata to a Chat with participants.
 func (acc *account) groupChat(g *types.GroupInfo) model.Chat {
-	ch := model.Chat{ID: g.JID.String(), Kind: model.ChatGroup, Name: g.GroupName.Name}
-	if g.GroupEphemeral.IsEphemeral {
-		ttl := int64(g.GroupEphemeral.DisappearingTimer)
+	ch := model.Chat{ID: g.JID.String(), Kind: model.ChatGroup, Name: g.Name}
+	if g.IsEphemeral {
+		ttl := int64(g.DisappearingTimer)
 		ch.EphemeralTTL = &ttl
 	}
 	for _, p := range g.Participants {

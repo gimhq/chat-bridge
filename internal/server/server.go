@@ -1,4 +1,4 @@
-// Package server exposes the core over HTTP (docs/chat-api-spec.md).
+// Package server exposes the core over HTTP (docs/api.md).
 package server
 
 import (
@@ -59,6 +59,15 @@ func New(opts Options) http.Handler {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
+	r.Get("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		if err := opts.Core.Ready(r.Context()); err != nil {
+			opts.Logger.Error("readyz", "err", err)
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
 	if opts.AdapterHub != nil {
 		r.Mount("/adapter/v1", opts.AdapterHub)
 	}
@@ -67,44 +76,50 @@ func New(opts Options) http.Handler {
 	r.Get("/ui/*", uiHandler(opts.UI))
 
 	r.Route("/v1", func(r chi.Router) {
-		r.Use(bearerAuth(opts.Token))
-		r.Get("/status", h.status)
-		r.Get("/platforms", h.platforms)
+		r.Use(bearerAuth(opts.Token, opts.Core))
+		r.Get("/status", adminOnly(h.status))
+		r.Get("/platforms", adminOnly(h.platforms))
+
+		r.Get("/tokens", adminOnly(h.listTokens))
+		r.Post("/tokens", adminOnly(h.createToken))
+		r.Get("/tokens/self", h.tokenSelf)
+		r.Patch("/tokens/{token}", adminOnly(h.patchToken))
+		r.Delete("/tokens/{token}", adminOnly(h.deleteToken))
 
 		r.Get("/persons", h.listPersons)
-		r.Post("/persons", h.createPerson)
-		r.Get("/persons/suggest", h.suggestPersons)
+		r.Post("/persons", adminOnly(h.createPerson))
+		r.Get("/persons/suggest", adminOnly(h.suggestPersons))
 		r.Route("/persons/{person}", func(r chi.Router) {
 			r.Get("/", h.getPerson)
-			r.Patch("/", h.patchPerson)
-			r.Delete("/", h.deletePerson)
-			r.Post("/links", h.linkPerson)
-			r.Delete("/links/{linkAccount}/{linkUser}", h.unlinkPerson)
-			r.Post("/merge", h.mergePersons)
+			r.Patch("/", adminOnly(h.patchPerson))
+			r.Delete("/", adminOnly(h.deletePerson))
+			r.Post("/links", adminOnly(h.linkPerson))
+			r.Delete("/links/{linkAccount}/{linkUser}", adminOnly(h.unlinkPerson))
+			r.Post("/merge", adminOnly(h.mergePersons))
 			r.Get("/chats", h.personChats)
 			r.Get("/messages", h.personMessages)
 		})
 
 		r.Get("/accounts", h.listAccounts)
-		r.Post("/accounts", h.createAccount)
+		r.Post("/accounts", adminOnly(h.createAccount))
 		r.Route("/accounts/{account}", func(r chi.Router) {
 			r.Get("/", h.getAccount)
-			r.Patch("/", h.patchAccount)
-			r.Delete("/", h.deleteAccount)
-			r.Patch("/self", h.patchSelf)
-			r.Post("/logout", h.logout)
-			r.Post("/reconnect", h.reconnect)
+			r.Patch("/", adminOnly(h.patchAccount))
+			r.Delete("/", adminOnly(h.deleteAccount))
+			r.Patch("/self", adminOnly(h.patchSelf))
+			r.Post("/logout", adminOnly(h.logout))
+			r.Post("/reconnect", adminOnly(h.reconnect))
 
-			r.Post("/login", h.loginStart)
-			r.Get("/login", h.loginGet)
-			r.Post("/login/submit", h.loginSubmit)
-			r.Delete("/login", h.loginCancel)
+			r.Post("/login", adminOnly(h.loginStart))
+			r.Get("/login", adminOnly(h.loginGet))
+			r.Post("/login/submit", adminOnly(h.loginSubmit))
+			r.Delete("/login", adminOnly(h.loginCancel))
 
 			r.Get("/chats", h.listChats)
-			r.Post("/chats", h.createChat)
+			r.Post("/chats", adminOnly(h.createChat))
 			r.Post("/chats/resolve", h.resolveChat)
 			r.Get("/chats/{chat}", h.getChat)
-			r.Patch("/chats/{chat}", h.patchChat)
+			r.Patch("/chats/{chat}", adminOnly(h.patchChat))
 			r.Post("/chats/{chat}/read", h.markRead)
 			r.Post("/chats/{chat}/typing", h.typing)
 			r.Get("/chats/{chat}/messages", h.listMessages)
@@ -119,22 +134,22 @@ func New(opts Options) http.Handler {
 
 			r.Post("/media", h.upload)
 
-			r.Get("/keys", h.keysStatus)
-			r.Post("/keys/verify", h.keysVerify)
-			r.Post("/keys/export", h.keysExport)
-			r.Post("/keys/import", h.keysImport)
+			r.Get("/keys", adminOnly(h.keysStatus))
+			r.Post("/keys/verify", adminOnly(h.keysVerify))
+			r.Post("/keys/export", adminOnly(h.keysExport))
+			r.Post("/keys/import", adminOnly(h.keysImport))
 
-			r.Get("/requests", h.listRequests)
-			r.Get("/requests/{req}", h.getRequest)
-			r.Post("/requests/{req}/accept", h.answerRequest(model.ActionAccept))
-			r.Post("/requests/{req}/reject", h.answerRequest(model.ActionReject))
-			r.Post("/requests/{req}/ignore", h.answerRequest(model.ActionIgnore))
+			r.Get("/requests", adminOnly(h.listRequests))
+			r.Get("/requests/{req}", adminOnly(h.getRequest))
+			r.Post("/requests/{req}/accept", adminOnly(h.answerRequest(model.ActionAccept)))
+			r.Post("/requests/{req}/reject", adminOnly(h.answerRequest(model.ActionReject)))
+			r.Post("/requests/{req}/ignore", adminOnly(h.answerRequest(model.ActionIgnore)))
 
 			r.Get("/contacts", h.listContacts)
 			r.Get("/contacts/{user}", h.getContact)
 			r.Get("/contacts/{user}/chats", h.contactChats)
 			r.Get("/contacts/{user}/messages", h.contactMessages)
-			r.Patch("/contacts/{user}", h.patchContact)
+			r.Patch("/contacts/{user}", adminOnly(h.patchContact))
 		})
 
 		r.Get("/media/{id}", h.getMedia)
@@ -143,23 +158,42 @@ func New(opts Options) http.Handler {
 
 		r.Get("/events", h.events)
 		r.Get("/events/stream", h.eventStream)
-		r.Get("/webhooks", h.listWebhooks)
-		r.Post("/webhooks", h.createWebhook)
-		r.Delete("/webhooks/{id}", h.deleteWebhook)
+		r.Get("/webhooks", adminOnly(h.listWebhooks))
+		r.Post("/webhooks", adminOnly(h.createWebhook))
+		r.Delete("/webhooks/{id}", adminOnly(h.deleteWebhook))
 	})
 	return r
 }
 
-func bearerAuth(token string) func(http.Handler) http.Handler {
+// bearerAuth accepts the admin token from the configuration, which is unrestricted, or the secret
+// of a scoped token, whose id then travels in the request context (core.WithToken).
+func bearerAuth(admin string, c *core.Core) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-			if got == "" || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
-				writeErr(w, &core.Error{Status: http.StatusUnauthorized, Code: "unauthorized", Message: "invalid or missing bearer token"})
+			if got != "" && subtle.ConstantTimeCompare([]byte(got), []byte(admin)) == 1 {
+				next.ServeHTTP(w, r)
 				return
 			}
-			next.ServeHTTP(w, r)
+			id, err := c.Authenticate(r.Context(), got)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(core.WithToken(r.Context(), id)))
 		})
+	}
+}
+
+// adminOnly answers 403 to scoped tokens. Every route is wrapped in it unless a scoped token is
+// meant to reach it; the core then limits what such a route returns.
+func adminOnly(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if core.Scoped(r.Context()) {
+			writeErr(w, &core.Error{Status: http.StatusForbidden, Code: "forbidden", Message: "this route needs the admin token"})
+			return
+		}
+		next(w, r)
 	}
 }
 

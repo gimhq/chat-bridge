@@ -1,6 +1,6 @@
 # chat-bridge - Task List
 
-> Updated: 2026-09-13
+> Updated: 2026-10-06
 
 ## Usage
 
@@ -43,3 +43,9 @@ Each task is a single line linking to its detail file. All detailed information 
 - [x] [**20260913-2319-telegram-bridgev2-connector Host mautrix-telegram's bridgev2 connector alongside the gotd adapter**](20260913-2319-telegram-bridgev2-connector.md) `P2`
 - [x] [**20260914-0206-contact-detail Contact detail page: everything about one contact**](20260914-0206-contact-detail.md) `P1`
 - [x] [**20260914-0209-schema-reset Reset the database schema to one base version**](20260914-0209-schema-reset.md) `P2`
+- [x] [**20261003-1646-ci-workflow Run the quality gates in CI on push and pull request**](20261003-1646-ci-workflow.md) `P2`
+- [x] [**20261003-1652-pma-go-alignment Align with the pma-go baseline: lint to green, comments, API spec sync**](20261003-1652-pma-go-alignment.md) `P1`
+- [x] [**20261003-1654-scoped-tokens Scoped API tokens: limit a token to chosen contacts and chats**](20261003-1654-scoped-tokens.md) `P1`
+- [ ] [**20261003-1806-dependency-bumps Bump direct Go dependencies to their latest releases**](20261003-1806-dependency-bumps.md) `P2`
+- [x] [**20261003-1744-token-read-only-and-resolve Scoped tokens: read-only switch; start a chat with an allowed contact**](20261003-1744-token-read-only-and-resolve.md) `P1`
+- [x] [**20261003-1745-tokens-web-ui Web UI: manage scoped tokens**](20261003-1745-tokens-web-ui.md) `P2`

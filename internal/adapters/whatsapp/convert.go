@@ -3,6 +3,7 @@ package whatsapp
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode"
@@ -233,23 +234,23 @@ func convertContent(m *waE2E.Message, mediaID string) (model.Content, bool) {
 		return model.Content{Type: model.ContentText, Text: m.GetExtendedTextMessage().GetText()}, true
 	case m.ImageMessage != nil:
 		im := m.ImageMessage
-		return mediaContent(model.ContentImage, im.GetCaption(), mediaID, im, im.GetMimetype(), "", int64(im.GetFileLength()), int(im.GetWidth()), int(im.GetHeight()), 0), true
+		return mediaContent(model.ContentImage, im.GetCaption(), mediaID, im, im.GetMimetype(), "", fileSize(im.GetFileLength()), int(im.GetWidth()), int(im.GetHeight()), 0), true
 	case m.VideoMessage != nil:
 		vm := m.VideoMessage
-		return mediaContent(model.ContentVideo, vm.GetCaption(), mediaID, vm, vm.GetMimetype(), "", int64(vm.GetFileLength()), int(vm.GetWidth()), int(vm.GetHeight()), int64(vm.GetSeconds())*1000), true
+		return mediaContent(model.ContentVideo, vm.GetCaption(), mediaID, vm, vm.GetMimetype(), "", fileSize(vm.GetFileLength()), int(vm.GetWidth()), int(vm.GetHeight()), int64(vm.GetSeconds())*1000), true
 	case m.AudioMessage != nil:
 		am := m.AudioMessage
 		t := model.ContentAudio
 		if am.GetPTT() {
 			t = model.ContentVoice
 		}
-		return mediaContent(t, "", mediaID, am, am.GetMimetype(), "", int64(am.GetFileLength()), 0, 0, int64(am.GetSeconds())*1000), true
+		return mediaContent(t, "", mediaID, am, am.GetMimetype(), "", fileSize(am.GetFileLength()), 0, 0, int64(am.GetSeconds())*1000), true
 	case m.DocumentMessage != nil:
 		dm := m.DocumentMessage
-		return mediaContent(model.ContentFile, dm.GetCaption(), mediaID, dm, dm.GetMimetype(), dm.GetFileName(), int64(dm.GetFileLength()), 0, 0, 0), true
+		return mediaContent(model.ContentFile, dm.GetCaption(), mediaID, dm, dm.GetMimetype(), dm.GetFileName(), fileSize(dm.GetFileLength()), 0, 0, 0), true
 	case m.StickerMessage != nil:
 		sm := m.StickerMessage
-		return mediaContent(model.ContentSticker, "", mediaID, sm, sm.GetMimetype(), "", int64(sm.GetFileLength()), int(sm.GetWidth()), int(sm.GetHeight()), 0), true
+		return mediaContent(model.ContentSticker, "", mediaID, sm, sm.GetMimetype(), "", fileSize(sm.GetFileLength()), int(sm.GetWidth()), int(sm.GetHeight()), 0), true
 	case m.LocationMessage != nil:
 		l := m.LocationMessage
 		return model.Content{Type: model.ContentLocation, Text: l.GetComment(), Location: &model.Location{
@@ -447,4 +448,12 @@ func waMarkdown(s string) string {
 	s = strings.ReplaceAll(s, "**", "*")
 	s = strings.ReplaceAll(s, "~~", "~")
 	return s
+}
+
+// fileSize converts a protocol file length, clamping values that do not fit an int64.
+func fileSize(n uint64) int64 {
+	if n > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(n)
 }

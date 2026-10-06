@@ -13,7 +13,7 @@ import (
 	"gimhq/chat-bridge/internal/model"
 )
 
-// Capability strings, see docs/chat-api-spec.md §3.2.
+// Capability strings, see docs/api.md §3.2.
 const (
 	CapSendText     = "send.text"
 	CapSendMedia    = "send.media"

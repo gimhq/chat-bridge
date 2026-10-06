@@ -20,12 +20,17 @@ type MessageQuery struct {
 	Limit  int
 	// Backfill tops a short page up from the platform's history (message.history) before answering.
 	Backfill bool
+	// Raw attaches the adapter payload to every message.
+	Raw bool
 }
 
 // ListMessages pages a chat.
 func (c *Core) ListMessages(ctx context.Context, accountID, chatID string, q MessageQuery) ([]model.Message, string, error) {
 	if _, err := c.st.GetAccount(ctx, accountID); errors.Is(err, store.ErrNotFound) {
 		return nil, "", errNotFound("account")
+	}
+	if err := c.allowChat(ctx, accountID, chatID); err != nil {
+		return nil, "", err
 	}
 	rows, next, err := c.st.ListMessages(ctx, accountID, chatID, q.Cursor, q.Before, q.After, q.Limit)
 	if err != nil {
@@ -52,6 +57,9 @@ func (c *Core) ListMessages(ctx context.Context, accountID, chatID string, q Mes
 	out := make([]model.Message, len(rows))
 	for i := range rows {
 		out[i] = rows[i].Message
+		if q.Raw {
+			out[i].Raw, _ = c.st.RawPayload(ctx, rows[i].Seq())
+		}
 	}
 	return out, next, nil
 }
@@ -113,7 +121,18 @@ func (c *Core) SearchMessages(ctx context.Context, accountID string, q SearchQue
 	if len(strings.Fields(q.Q)) == 0 {
 		return nil, "", errInvalid("q is required")
 	}
-	rows, next, err := c.st.SearchMessages(ctx, accountID, q.ChatID, q.Q, q.Cursor, q.Limit)
+	sc, err := c.scopeOf(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	var only store.Only
+	if sc != nil {
+		if !sc.accounts[accountID] {
+			return nil, "", errNotFound("account")
+		}
+		only = sc.chatIDs(accountID)
+	}
+	rows, next, err := c.st.SearchMessages(ctx, accountID, q.ChatID, q.Q, q.Cursor, q.Limit, only)
 	if err != nil {
 		if q.Cursor != "" && err.Error() == "bad cursor" {
 			return nil, "", errInvalid("bad cursor")
@@ -136,6 +155,9 @@ func (c *Core) GetMessage(ctx context.Context, accountID, id string, raw bool) (
 	if err != nil {
 		return model.Message{}, err
 	}
+	if err := c.allowMessage(ctx, m); err != nil {
+		return model.Message{}, err
+	}
 	if raw {
 		m.Raw, _ = c.st.RawPayload(ctx, m.Seq())
 	}
@@ -150,6 +172,12 @@ var sendable = map[string]string{
 
 // Send delivers a message. The bool reports whether an existing message was returned (client_id replay).
 func (c *Core) Send(ctx context.Context, accountID, chatID string, req model.SendRequest) (model.Message, bool, error) {
+	if err := c.allowWrite(ctx); err != nil {
+		return model.Message{}, false, err
+	}
+	if err := c.allowChat(ctx, accountID, chatID); err != nil {
+		return model.Message{}, false, err
+	}
 	row, ad, err := c.connected(ctx, accountID)
 	if err != nil {
 		return model.Message{}, false, err
@@ -203,6 +231,12 @@ func (c *Core) Send(ctx context.Context, accountID, chatID string, req model.Sen
 		}
 		if err != nil {
 			return model.Message{}, false, err
+		}
+		// A scoped token attaches its account's uploads, or media it can already read.
+		if md.MessageSeq != 0 || md.AccountID != accountID {
+			if err := c.allowMedia(ctx, md); err != nil {
+				return model.Message{}, false, err
+			}
 		}
 		if md.State != model.MediaReady {
 			return model.Message{}, false, errInvalid("media %s is %s", md.ID, md.State)
@@ -296,6 +330,9 @@ func (m *mediaSource) Open(ctx context.Context, mediaID string) (io.ReadCloser, 
 
 // Edit changes a sent message's text.
 func (c *Core) Edit(ctx context.Context, accountID, id string, content model.Content) (model.Message, error) {
+	if err := c.allowWrite(ctx); err != nil {
+		return model.Message{}, err
+	}
 	_, ad, err := c.connected(ctx, accountID)
 	if err != nil {
 		return model.Message{}, err
@@ -309,6 +346,9 @@ func (c *Core) Edit(ctx context.Context, accountID, id string, content model.Con
 		return model.Message{}, errNotFound("message")
 	}
 	if err != nil {
+		return model.Message{}, err
+	}
+	if err := c.allowMessage(ctx, m); err != nil {
 		return model.Message{}, err
 	}
 	if !m.FromMe {
@@ -339,6 +379,9 @@ func (c *Core) Edit(ctx context.Context, accountID, id string, content model.Con
 
 // Delete unsends a message for everyone.
 func (c *Core) Delete(ctx context.Context, accountID, id string) (model.Message, error) {
+	if err := c.allowWrite(ctx); err != nil {
+		return model.Message{}, err
+	}
 	_, ad, err := c.connected(ctx, accountID)
 	if err != nil {
 		return model.Message{}, err
@@ -352,6 +395,9 @@ func (c *Core) Delete(ctx context.Context, accountID, id string) (model.Message,
 		return model.Message{}, errNotFound("message")
 	}
 	if err != nil {
+		return model.Message{}, err
+	}
+	if err := c.allowMessage(ctx, m); err != nil {
 		return model.Message{}, err
 	}
 	if err := del.DeleteMessage(ctx, accountID, m.ChatID, m.ID, m.Sender.ID); err != nil {
@@ -375,6 +421,9 @@ func (c *Core) Delete(ctx context.Context, accountID, id string) (model.Message,
 
 // React adds or removes the account's reaction.
 func (c *Core) React(ctx context.Context, accountID, id, emoji string, remove bool) error {
+	if err := c.allowWrite(ctx); err != nil {
+		return err
+	}
 	row, ad, err := c.connected(ctx, accountID)
 	if err != nil {
 		return err
@@ -388,6 +437,9 @@ func (c *Core) React(ctx context.Context, accountID, id, emoji string, remove bo
 		return errNotFound("message")
 	}
 	if err != nil {
+		return err
+	}
+	if err := c.allowMessage(ctx, m); err != nil {
 		return err
 	}
 	if err := re.React(ctx, accountID, m.ChatID, m.ID, m.Sender.ID, emoji, remove); err != nil {

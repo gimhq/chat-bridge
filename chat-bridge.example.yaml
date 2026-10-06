@@ -25,6 +25,9 @@ events:
 log:
   level: info                         # debug | info | warn | error
 
+persons:
+  auto_link_by_phone: true            # join contacts that share a phone on different accounts into one person
+
 adapters:
   telegram:
     api_id: 0                         # application credentials from https://my.telegram.org; shared by all Telegram accounts

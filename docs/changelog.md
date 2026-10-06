@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-10-06 06:11 [progress]
+
+Task `20261003-1745-tokens-web-ui` (plan of the same id): the management UI manages scoped tokens.
+
+- System page: a tokens card lists name, scope summary, read-only badge, creation and last use; create and edit in a dialog with a read-only switch, persons as toggles, and contacts and chats picked per account with search; the secret is shown once with a copy button; revoke asks for confirmation
+- Sign-in screen: a scoped token gets "管理界面需要管理员令牌" instead of "服务器返回 403"
+- Tests: Vitest for the card (list, revoke, create from the pickers, edit) and the sign-in message
+- Delivery checks on the whole change set: a database created by the v0.1.0 binary upgrades to schema 2 with its rows intact; token create, scope enforcement, read-only, scope edit and revoke exercised over HTTP against the built binary; a browser run (Playwright 1.63, Chromium) drives the card end to end against the embedded UI, 8 steps, no console errors. The run found two buttons with the same accessible name (a contact and its direct chat are both titled by the contact); the labels now name the kind
+- `bun run test` crashes in the coverage merge when vitest runs on the bun runtime (an image without Node); with Node, as on the CI runner, 46 tests pass
+
+## 2026-10-03 17:46 [progress]
+
+Task `20261003-1744-token-read-only-and-resolve` (plan of the same id): the user's answers to the open questions of the scoped-token plan.
+
+- `scope.read_only`: a read-only token gets `403 forbidden` on send, edit, delete, react, typing, read receipts, upload and `chats/resolve` (`Core.allowWrite`); reads are unchanged
+- `POST /accounts/{a}/chats/resolve` is open to scoped tokens for contacts in their scope: the handle must be the contact's user id, stored handle or stored phone, the platform must answer with that contact, and the resulting direct chat is stored so the token can use it. Other handles answer `404` before the adapter is asked
+- Confirmed, no change: a group is visible only when it is listed; filtering is by chat
+- Web UI for tokens is task `20261003-1745-tokens-web-ui`, to be done later
+- Docs: `api.md` §2.1 and §4.11, README. Tests: `TestReadOnlyToken`, `TestScopedTokenStartsChat`, route allowlist
+
+## 2026-10-03 17:37 [progress]
+
+Task `20261003-1654-scoped-tokens` (plan of the same id): scoped API tokens.
+
+- `server.token` stays the admin token; additional tokens live in the new `tokens` table (migration 2, SHA-256 of the secret only) and are managed through `GET/POST /tokens`, `PATCH/DELETE /tokens/{id}`; `GET /tokens/self` tells any token what it is
+- A scope lists persons, contacts and chats; it resolves on every request to allowed contacts and chats (direct chats of the allowed contacts plus the listed chats). Chats, messages, search, contacts, persons, media, events and the account list are limited to it in SQL; out-of-scope objects answer `404`, management routes `403 forbidden`
+- `internal/server`: `adminOnly` wraps every route a scoped token must not reach; `TestScopedTokenRouteAllowlist` walks the router and fails on a route without a decision
+- Decisions taken with the proposal's defaults: a contact's messages in groups stay hidden unless the group is listed; no read-only switch; `chats/resolve` is admin-only; webhooks are admin-only; no UI page yet
+- Docs: `api.md` §2, §2.1, §4.11, §10; `storage.md` §2, §8; README, AGENTS, architecture
+- Tests: store (token CRUD, `Only` filters, event scope), server (in-scope and out-of-scope access per route family, events, media, persons, revocation, route walk); removing the search or event filter or one `adminOnly` makes them fail
+
+Task `20261003-1652-pma-go-alignment` (plan of the same id), phases 1 to 3: the repository meets the `/pma-go` baseline.
+
+- Lint: `golangci-lint run` went from 139 issues to 0. Doc comments on about 90 adapter methods (`adapter/fake`, `adapters/remote`, `adapters/connector`, `adapters/matrix`, `adapters/telegram`); four comments pointed at a missing `docs/chat-api-spec.md`, now `docs/api.md`; unchecked `Close`/`Remove` errors, shadowed builtins and unused parameters fixed; deprecated calls replaced (`GetUserLogins`, `MemberMap` with a fallback to the old list, in-place attachment encryption and decryption, gotd `Duration`); WhatsApp file lengths clamp instead of overflowing; deliberate cases carry a scoped `//nolint` with the reason
+- `.golangci.yml` follows the starter (explicit linter list with `gocritic`, test-scoped exclusions for gosec and errcheck, timeout), keeping `errorlint`
+- Spec sync: `api.md` loses the WhatsApp-only migration section, the four request capabilities no adapter declared, `send.poll`, the Matrix `sso` flow and the upload `kind` field (the send request's `content.type` already says it); `PATCH chats` documents that only `name` reaches the platform; Keys moves from §4.7a to §4.12; `storage.md` §7 separates the retention that runs from the planned part and drops the stale §10
+- New behavior: `?raw=1` on `GET …/chats/{chat}/messages`; `GET /readyz` pings the database
+- Tooling: Go 1.27 with a `toolchain` directive (`go.mod`, Dockerfile); `Taskfile.yml` with `check`; the gate gains `go mod tidy` with no diff and `-cover`; decision records for SQLite with embedded migrations and for stdlib `flag`; example config and `.env.example` list `persons.auto_link_by_phone` and `adapters.telegram.bridgev2`
+- Not done: phase 4 (dependency bumps) is task `20261003-1806-dependency-bumps`; retention and GC stay with task `20260913-0530-api-framework-completion`
+
+Task `20261003-1646-ci-workflow`: `.github/workflows/ci.yml` runs on push to `main` and on pull requests.
+
+- Jobs: web UI gate; Go gate (gofmt, vet, golangci-lint v2.14.0, tests with coverage, build, tidy check, `tgbridge` line); Docker `test` stage with a layer cache, the only check of the `signal` tag. Actions are pinned to commit SHAs
+- Server tests waited on a background contact sync by luck and failed about one run in eight; `env.connected` now waits for the synced contact (60 consecutive runs pass)
+
 ## 2026-09-14 02:45 [progress]
 
 Task `20260914-0206-contact-detail` (plan of the same id): a detail page for every contact.

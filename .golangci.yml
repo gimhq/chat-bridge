@@ -1,17 +1,29 @@
 version: "2"
 run:
+  timeout: 5m
   # Matrix E2EE uses the pure-Go olm implementation; the default backend needs cgo + libolm.
   build-tags:
     - goolm
     # The bridgev2 Telegram instance; cgo (gcc) only, unlike `signal`, which needs libsignal.
     - tgbridge
 linters:
-  default: standard
+  default: none
   enable:
+    - govet
+    - staticcheck
+    - errcheck
     - revive
     - gosec
-    - errorlint
     - misspell
+    - ineffassign
+    - unused
+    - gocritic
+    - errorlint
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go # relax security and error-check noise in tests only
+        linters: [gosec, errcheck]
 formatters:
   enable:
     - gofmt

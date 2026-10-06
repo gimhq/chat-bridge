@@ -21,7 +21,7 @@ COPY web/ ./
 RUN mkdir -p ../internal/webui/dist && bun run typecheck && bun run build
 
 # ---- build stage --------------------------------------------------------------
-FROM golang:1.26-alpine AS build
+FROM golang:1.27-alpine AS build
 RUN apk add --no-cache build-base zlib-dev
 WORKDIR /src
 

@@ -25,8 +25,8 @@ adapter leaving or returning changes account status but never account data.
 |---|---|
 | `cmd/chat-bridge` | Entrypoint: loads config, opens store and media, registers adapters, serves HTTP |
 | `internal/config` | koanf config: defaults < YAML file < `CHATBRIDGE_*` env, validated at startup |
-| `internal/server` | Chi router, bearer-token auth on `/v1`, request handlers |
-| `internal/core` | Account lifecycle, message/chat/media orchestration, event fan-out |
+| `internal/server` | Chi router, bearer-token auth on `/v1` (admin token or scoped token), request handlers |
+| `internal/core` | Account lifecycle, message/chat/media orchestration, event fan-out, scoped-token allowlists |
 | `internal/adapter` | Contract between core and platform implementations (`fake` for tests) |
 | `internal/adapters/{whatsapp,telegram,matrix}` | Platform adapters (whatsmeow, gotd, mautrix-go); `base` holds shared helpers |
 | `internal/adapters/matrixcontent` | Matrix event content ↔ `model.Content`, shared by the Matrix adapter and the connector host |
@@ -48,6 +48,9 @@ adapter leaving or returning changes account status but never account data.
   sent message and emits `message.new`. Replies with the same `client_id` return the stored row.
 - Login: a platform-agnostic step machine (`input` / `display` / `done` / `failed`) driven by the
   adapter, recorded as `account.login_step` events.
+- Scoped tokens: the server puts the token id in the request context; every core read and write
+  resolves it to an allowlist of contacts and chats and filters in SQL (`api.md` §4.11). A context
+  without a token id (admin token, adapters, background workers) is unrestricted.
 - Requests: adapter `request` events (invites, join requests, calls) → `requests` rows keyed by the
   adapter's stable key → `request.new` / `request.updated`; answers go back through
   `RequestAnswerer`, and the GC loop expires pending ones.

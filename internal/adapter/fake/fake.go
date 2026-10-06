@@ -87,9 +87,13 @@ func (a *Adapter) Push(ctx context.Context, accountID string, evs ...adapter.Eve
 	return a.sink.Events(ctx, accountID, evs)
 }
 
+// Start keeps the sink for Push.
 func (a *Adapter) Start(_ context.Context, sink adapter.Sink) error { a.sink = sink; return nil }
-func (a *Adapter) Stop(context.Context) error                       { return nil }
 
+// Stop does nothing.
+func (a *Adapter) Stop(context.Context) error { return nil }
+
+// AddAccount remembers the account's config.
 func (a *Adapter) AddAccount(_ context.Context, id string, cfg json.RawMessage, _ string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -97,6 +101,7 @@ func (a *Adapter) AddAccount(_ context.Context, id string, cfg json.RawMessage, 
 	return nil
 }
 
+// RemoveAccount forgets the account.
 func (a *Adapter) RemoveAccount(_ context.Context, id string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -104,8 +109,10 @@ func (a *Adapter) RemoveAccount(_ context.Context, id string) error {
 	return nil
 }
 
+// Reconnect does nothing.
 func (a *Adapter) Reconnect(context.Context, string) error { return nil }
 
+// LoginStart answers a QR display step for flow "qr" and a phone input step for any other flow.
 func (a *Adapter) LoginStart(_ context.Context, id, flow string) (model.LoginStep, error) {
 	var step model.LoginStep
 	switch flow {
@@ -120,6 +127,7 @@ func (a *Adapter) LoginStart(_ context.Context, id, flow string) (model.LoginSte
 	return step, nil
 }
 
+// LoginSubmit completes the login, or fails it when the phone field is "bad".
 func (a *Adapter) LoginSubmit(_ context.Context, id string, fields map[string]string) (model.LoginStep, error) {
 	if fields["phone"] == "bad" {
 		return model.LoginStep{Flow: "phone", Step: model.StepFailed, Error: &model.Error{Code: "platform_error", Message: "rejected"}}, nil
@@ -131,15 +139,21 @@ func (a *Adapter) LoginSubmit(_ context.Context, id string, fields map[string]st
 	return step, nil
 }
 
+// LoginRefresh returns the last step.
 func (a *Adapter) LoginRefresh(_ context.Context, id string) (model.LoginStep, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return a.steps[id], nil
 }
 
+// LoginCancel does nothing.
 func (a *Adapter) LoginCancel(context.Context, string) error { return nil }
-func (a *Adapter) Logout(context.Context, string) error      { return nil }
 
+// Logout does nothing.
+func (a *Adapter) Logout(context.Context, string) error { return nil }
+
+// GetChat returns a group for ids starting with "g", invalid_target for ids starting with
+// "missing", and a direct chat otherwise.
 func (a *Adapter) GetChat(_ context.Context, _, chatID string) (model.Chat, error) {
 	if strings.HasPrefix(chatID, "g") {
 		return model.Chat{ID: chatID, Kind: model.ChatGroup, Name: "Group " + chatID,
@@ -151,10 +165,13 @@ func (a *Adapter) GetChat(_ context.Context, _, chatID string) (model.Chat, erro
 	return model.Chat{ID: chatID, Kind: model.ChatDirect, Name: "Direct " + chatID}, nil
 }
 
+// ListContacts returns one fixed contact.
 func (a *Adapter) ListContacts(context.Context, string) ([]model.Contact, error) {
 	return []model.Contact{{ID: "u1@fake", Handle: "+1", Phone: "+1", Names: model.Names{Alias: "Alice W", Profile: "alice"}, IsContact: true}}, nil
 }
 
+// SendMessage reads every attachment, records the request in Sent and returns a generated id;
+// FailSend makes it fail instead.
 func (a *Adapter) SendMessage(ctx context.Context, _ string, req adapter.SendRequest) (model.Message, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -174,6 +191,7 @@ func (a *Adapter) SendMessage(ctx context.Context, _ string, req adapter.SendReq
 	return model.Message{ID: fmt.Sprintf("sent-%d", a.nextID), Timestamp: time.Now().UTC()}, nil
 }
 
+// FetchMedia writes fixed bytes, or fails when the remote ref contains "fail".
 func (a *Adapter) FetchMedia(_ context.Context, _, _ string, ref json.RawMessage, w io.Writer) (adapter.MediaMeta, error) {
 	if strings.Contains(string(ref), "fail") {
 		return adapter.MediaMeta{}, adapter.Errorf(adapter.ErrPlatform, "download failed")
@@ -182,15 +200,18 @@ func (a *Adapter) FetchMedia(_ context.Context, _, _ string, ref json.RawMessage
 	return adapter.MediaMeta{Mime: "image/png"}, nil
 }
 
+// ResolveChat maps a handle to "<handle without +>@fake".
 func (a *Adapter) ResolveChat(_ context.Context, _, handle string) (model.ResolvedChat, error) {
 	id := strings.TrimPrefix(handle, "+") + "@fake"
 	return model.ResolvedChat{ChatID: id, Kind: model.ChatDirect, UserID: id}, nil
 }
 
+// EditMessage echoes the new content.
 func (a *Adapter) EditMessage(_ context.Context, _, chatID, msgID string, c model.Content) (model.Message, error) {
 	return model.Message{ID: msgID, ChatID: chatID, Content: c}, nil
 }
 
+// DeleteMessage records the message id in Deleted.
 func (a *Adapter) DeleteMessage(_ context.Context, _, _, msgID, _ string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -198,6 +219,7 @@ func (a *Adapter) DeleteMessage(_ context.Context, _, _, msgID, _ string) error 
 	return nil
 }
 
+// React records "<message>:<emoji>:<remove>" in Reacted.
 func (a *Adapter) React(_ context.Context, _, _, msgID, _, emoji string, remove bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -205,6 +227,7 @@ func (a *Adapter) React(_ context.Context, _, _, msgID, _, emoji string, remove 
 	return nil
 }
 
+// MarkRead records the message ids in Read.
 func (a *Adapter) MarkRead(_ context.Context, _, _ string, ids []string, _ string) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -212,13 +235,15 @@ func (a *Adapter) MarkRead(_ context.Context, _, _ string, ids []string, _ strin
 	return nil
 }
 
+// Typing does nothing.
 func (a *Adapter) Typing(context.Context, string, string, string) error { return nil }
 
-// KeysStatus, KeysVerify, KeysExport, KeysImport implement adapter.KeyManager.
+// KeysStatus reports one device, cross-signed once KeysVerify succeeded.
 func (a *Adapter) KeysStatus(context.Context, string) (model.KeyStatus, error) {
 	return model.KeyStatus{DeviceID: "DEV", Fingerprint: "ab cd", CrossSigned: a.verified, Sessions: 1}, nil
 }
 
+// KeysVerify marks the device verified, or fails when the recovery key is "bad".
 func (a *Adapter) KeysVerify(_ context.Context, _, recoveryKey string) (model.KeyVerifyResult, error) {
 	if recoveryKey == "bad" {
 		return model.KeyVerifyResult{}, adapter.Errorf(adapter.ErrInvalidInput, "wrong recovery key")
@@ -227,14 +252,17 @@ func (a *Adapter) KeysVerify(_ context.Context, _, recoveryKey string) (model.Ke
 	return model.KeyVerifyResult{CrossSigned: true, BackupVersion: "3", SessionsImported: 7}, nil
 }
 
+// KeysExport returns a fixed payload that embeds the passphrase.
 func (a *Adapter) KeysExport(_ context.Context, _, passphrase string) ([]byte, error) {
 	return []byte("EXPORT:" + passphrase), nil
 }
 
+// KeysImport reports two imported sessions.
 func (a *Adapter) KeysImport(_ context.Context, _, _ string, _ []byte) (int, error) { return 2, nil }
 
 // --- Phase A optional interfaces ---
 
+// CreateChat records a new group in Created; an empty name is invalid.
 func (a *Adapter) CreateChat(_ context.Context, _ string, req adapter.CreateChatRequest) (model.Chat, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -250,6 +278,7 @@ func (a *Adapter) CreateChat(_ context.Context, _ string, req adapter.CreateChat
 	return ch, nil
 }
 
+// UpdateChat records "<chat>=<name>" in Renamed.
 func (a *Adapter) UpdateChat(_ context.Context, _, chatID string, p adapter.ChatUpdate) (model.Chat, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -279,6 +308,7 @@ func (a *Adapter) Backfill(_ context.Context, _, chatID string, before adapter.B
 	return out, false, nil
 }
 
+// UpdateSelf applies the patch to Self, reads a new avatar, and records the patch in SelfUpdates.
 func (a *Adapter) UpdateSelf(ctx context.Context, accountID string, p adapter.SelfUpdate) (model.Contact, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -302,6 +332,7 @@ func (a *Adapter) UpdateSelf(ctx context.Context, accountID string, p adapter.Se
 	return self, nil
 }
 
+// Block records "<user>:<blocked>" in Blocked.
 func (a *Adapter) Block(_ context.Context, _, userID string, blocked bool) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -309,6 +340,7 @@ func (a *Adapter) Block(_ context.Context, _, userID string, blocked bool) error
 	return nil
 }
 
+// AnswerRequest records the answer in Answered; FailAnswer makes it fail instead.
 func (a *Adapter) AnswerRequest(_ context.Context, _ string, ans adapter.RequestAnswer) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -319,6 +351,7 @@ func (a *Adapter) AnswerRequest(_ context.Context, _ string, ans adapter.Request
 	return nil
 }
 
+// CanonicalIDs reports the ids listed in Identities.
 func (a *Adapter) CanonicalIDs(_ context.Context, _ string, ids []string) (map[string]string, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

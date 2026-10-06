@@ -65,6 +65,19 @@ rooms are end-to-end encrypted transparently; `POST /accounts/{a}/keys/verify` w
 account's recovery key cross-signs the bridge device and restores the key backup. Signal links
 as a secondary device: `{"flow":"qr"}` returns the `sgnl://linkdevice` URI to scan.
 
+## Tokens
+
+`server.token` is the admin token. Each other consumer gets its own scoped token, limited to the
+persons, contacts and chats it lists: it can read, search and send only there, and every
+management route answers `403` (`docs/api.md` §4.11). `"read_only": true` in the scope leaves
+reading and searching only; `POST …/chats/resolve` lets a token start a chat with a contact it lists.
+
+```bash
+curl -s -H "$T" -H 'Content-Type: application/json' $B/tokens \
+  -d '{"name":"family-assistant","scope":{"contacts":[{"account_id":"wa-main","user_id":"8613800000000@s.whatsapp.net"}]}}'
+# → {"id":"tok_…","token":"cbt_…", …}   the secret is shown once
+```
+
 ## Web UI
 
 The binary serves a management UI at `http://127.0.0.1:8080/ui/` (`/` redirects there). Sign in
@@ -74,7 +87,7 @@ create and rename groups, search), the message timeline (media, replies, reactio
 and files, older history), contacts (alias, block), requests (accept invites, reject calls, with a
 toast when one arrives), persons (one human's contacts across accounts: automatic grouping by
 phone, suggestions, merged timeline, merge and unlink), a live event log, and system status with
-webhooks.
+scoped tokens (create with a scope picker and a read-only switch, edit, revoke) and webhooks.
 
 The UI is built from `web/` (React, Vite, TanStack Router and Query, shadcn/ui on Base UI) into
 `internal/webui/dist` and embedded with `go:embed`; the Docker build does this in a bun stage.
@@ -117,7 +130,7 @@ docs/                   specs, architecture, PMA task/plan tracking
 ## Quality gates
 
 ```bash
-test -z "$(gofmt -l .)" && go vet -tags goolm ./... && golangci-lint run && go test -tags goolm ./... && go build -tags goolm ./...
+test -z "$(gofmt -l .)" && go vet -tags goolm ./... && golangci-lint run && go test -tags goolm -cover ./... && go build -tags goolm ./... && go mod tidy && git diff --exit-code go.mod go.sum
 # with libsignal available (see above); skipped when .tmp/libsignal/libsignal_ffi.a is absent
 CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go vet -tags goolm,signal ./... && CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go build -tags goolm,signal ./...
 # bridgev2 Telegram instance (a C compiler is enough)
@@ -132,7 +145,10 @@ bun run lint && bun run typecheck && bun run test && bun run build
 
 `docker build --target test .` runs `go vet` and the unit tests with both tags in the build toolchain.
 `golangci-lint` (config in `.golangci.yml`) is expected on the developer machine; it is not part
-of the Docker build.
+of the Docker build. `task check` (`Taskfile.yml`) runs the Go gates in order, `task web` the UI ones.
+
+`.github/workflows/ci.yml` runs all of the above on every push to `main` and every pull request:
+the web UI gate, the Go gates with the `tgbridge` line, and the Docker `test` stage for `signal`.
 
 ## Documentation
 

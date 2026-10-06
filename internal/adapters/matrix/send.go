@@ -118,8 +118,8 @@ func buildContent(ctx context.Context, cli *mautrix.Client, req adapter.SendRequ
 				return nil, event.Type{}, err
 			}
 			ef := attachment.NewEncryptedFile()
-			data := ef.Encrypt(plain)
-			up, err := cli.UploadMedia(ctx, mautrix.ReqUploadMedia{ContentBytes: data, ContentType: "application/octet-stream"})
+			ef.EncryptInPlace(plain)
+			up, err := cli.UploadMedia(ctx, mautrix.ReqUploadMedia{ContentBytes: plain, ContentType: "application/octet-stream"})
 			if err != nil {
 				return nil, event.Type{}, mapErr("upload", err)
 			}
@@ -351,11 +351,10 @@ func (a *Adapter) FetchMedia(ctx context.Context, accountID, _ string, ref json.
 	if err != nil {
 		return adapter.MediaMeta{}, base.PlatformErr("download", err)
 	}
-	plain, err := r.File.Decrypt(data)
-	if err != nil {
+	if err := r.File.DecryptInPlace(data); err != nil {
 		return adapter.MediaMeta{}, base.PlatformErr("decrypt attachment", err)
 	}
-	if _, err := w.Write(plain); err != nil {
+	if _, err := w.Write(data); err != nil {
 		return adapter.MediaMeta{}, err
 	}
 	return adapter.MediaMeta{}, nil

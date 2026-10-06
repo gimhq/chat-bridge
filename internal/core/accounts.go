@@ -23,14 +23,22 @@ type loginState struct {
 	step       model.LoginStep
 }
 
-// ListAccounts returns the list view (no config/device/stats).
+// ListAccounts returns the list view (no config/device/stats). A scoped token gets the accounts
+// its scope touches.
 func (c *Core) ListAccounts(ctx context.Context) ([]model.Account, error) {
 	rows, err := c.st.ListAccounts(ctx)
 	if err != nil {
 		return nil, err
 	}
+	sc, err := c.scopeOf(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := make([]model.Account, 0, len(rows))
 	for _, r := range rows {
+		if sc != nil && !sc.accounts[r.ID] {
+			continue
+		}
 		a, err := c.accountView(ctx, r, false)
 		if err != nil {
 			return nil, err
@@ -40,8 +48,11 @@ func (c *Core) ListAccounts(ctx context.Context) ([]model.Account, error) {
 	return out, nil
 }
 
-// GetAccount returns the full view.
+// GetAccount returns the full view; a scoped token gets the list view of an account in its scope.
 func (c *Core) GetAccount(ctx context.Context, id string) (model.Account, error) {
+	if err := c.allowAccount(ctx, id); err != nil {
+		return model.Account{}, err
+	}
 	row, err := c.st.GetAccount(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return model.Account{}, errNotFound("account")
@@ -49,7 +60,7 @@ func (c *Core) GetAccount(ctx context.Context, id string) (model.Account, error)
 	if err != nil {
 		return model.Account{}, err
 	}
-	return c.accountView(ctx, row, true)
+	return c.accountView(ctx, row, !Scoped(ctx))
 }
 
 func (c *Core) accountView(ctx context.Context, row store.AccountRow, full bool) (model.Account, error) {

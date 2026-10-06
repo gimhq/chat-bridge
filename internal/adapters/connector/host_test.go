@@ -56,7 +56,7 @@ func (f *fakeNet) LoadUserLogin(_ context.Context, login *bridgev2.UserLogin) er
 func (f *fakeNet) GetLoginFlows() []bridgev2.LoginFlow {
 	return []bridgev2.LoginFlow{{Name: "Phone", Description: "Phone number", ID: "phone"}}
 }
-func (f *fakeNet) CreateLogin(_ context.Context, user *bridgev2.User, flowID string) (bridgev2.LoginProcess, error) {
+func (f *fakeNet) CreateLogin(_ context.Context, user *bridgev2.User, _ string) (bridgev2.LoginProcess, error) {
 	return &fakeLogin{net: f, user: user}, nil
 }
 func (f *fakeNet) GetBridgeInfoVersion() (int, int) { return 1, 1 }
@@ -118,13 +118,13 @@ func (a *fakeAPI) GetUserID() networkid.UserID                            { retu
 func (a *fakeAPI) IsLoggedIn() bool                                       { return true }
 func (a *fakeAPI) LogoutRemote(context.Context)                           {}
 func (a *fakeAPI) IsThisUser(_ context.Context, id networkid.UserID) bool { return id == "me" }
-func (a *fakeAPI) GetChatInfo(_ context.Context, portal *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
+func (a *fakeAPI) GetChatInfo(context.Context, *bridgev2.Portal) (*bridgev2.ChatInfo, error) {
 	name := "Alice"
 	typ := database.RoomTypeDM
 	return &bridgev2.ChatInfo{Name: &name, Type: &typ, Members: &bridgev2.ChatMemberList{IsFull: true, OtherUserID: "alice",
-		Members: []bridgev2.ChatMember{
-			{EventSender: bridgev2.EventSender{Sender: "alice"}, Membership: event.MembershipJoin},
-			{EventSender: bridgev2.EventSender{IsFromMe: true, Sender: "me"}, Membership: event.MembershipJoin},
+		MemberMap: bridgev2.ChatMemberMap{
+			"alice": {EventSender: bridgev2.EventSender{Sender: "alice"}, Membership: event.MembershipJoin},
+			"me":    {EventSender: bridgev2.EventSender{IsFromMe: true, Sender: "me"}, Membership: event.MembershipJoin},
 		}}}, nil
 }
 func (a *fakeAPI) GetUserInfo(_ context.Context, ghost *bridgev2.Ghost) (*bridgev2.UserInfo, error) {

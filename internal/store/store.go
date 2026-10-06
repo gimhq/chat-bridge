@@ -33,7 +33,7 @@ type Store struct {
 
 // migrations[i] brings a database from version i to i+1. Development started over from one base
 // schema; changes to a deployed database append a new entry.
-var migrations = []string{schemaV1}
+var migrations = []string{schemaV1, schemaV2}
 
 // Open opens (or creates) the database at path and applies pending migrations.
 func Open(ctx context.Context, path string) (*Store, error) {
@@ -50,6 +50,9 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	}
 	return s, nil
 }
+
+// Ping checks that the database answers.
+func (s *Store) Ping(ctx context.Context) error { return s.db.PingContext(ctx) }
 
 // Close closes the database.
 func (s *Store) Close() error { return s.db.Close() }

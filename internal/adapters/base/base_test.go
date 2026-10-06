@@ -78,7 +78,7 @@ func TestPlatformErr(t *testing.T) {
 		t.Fatal("nil passthrough")
 	}
 	ae := adapter.Errorf(adapter.ErrInvalidTarget, "x")
-	if PlatformErr("op", ae) != ae {
+	if PlatformErr("op", ae) != ae { //nolint:errorlint // identity is the point: the same value must come back
 		t.Fatal("adapter error must pass through unchanged")
 	}
 	wrapped := PlatformErr("op", errors.New("boom"))

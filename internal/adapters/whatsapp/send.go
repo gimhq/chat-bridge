@@ -113,7 +113,7 @@ func (acc *account) buildMedia(ctx context.Context, req adapter.SendRequest, cap
 	if err != nil {
 		return nil, base.PlatformErr("upload media", err)
 	}
-	cap := optStr(caption)
+	capt := optStr(caption)
 	base := func() (*string, *string, []byte, []byte, []byte, *uint64) {
 		return proto.String(up.URL), proto.String(up.DirectPath), up.MediaKey, up.FileEncSHA256, up.FileSHA256, proto.Uint64(up.FileLength)
 	}
@@ -121,11 +121,11 @@ func (acc *account) buildMedia(ctx context.Context, req adapter.SendRequest, cap
 	case model.ContentImage:
 		u, d, k, e, s, l := base()
 		return &waE2E.Message{ImageMessage: &waE2E.ImageMessage{URL: u, DirectPath: d, MediaKey: k, FileEncSHA256: e, FileSHA256: s, FileLength: l,
-			Mimetype: proto.String(mime), Caption: cap, ContextInfo: ci}}, nil
+			Mimetype: proto.String(mime), Caption: capt, ContextInfo: ci}}, nil
 	case model.ContentVideo:
 		u, d, k, e, s, l := base()
 		return &waE2E.Message{VideoMessage: &waE2E.VideoMessage{URL: u, DirectPath: d, MediaKey: k, FileEncSHA256: e, FileSHA256: s, FileLength: l,
-			Mimetype: proto.String(mime), Caption: cap, ContextInfo: ci}}, nil
+			Mimetype: proto.String(mime), Caption: capt, ContextInfo: ci}}, nil
 	case model.ContentAudio, model.ContentVoice:
 		u, d, k, e, s, l := base()
 		return &waE2E.Message{AudioMessage: &waE2E.AudioMessage{URL: u, DirectPath: d, MediaKey: k, FileEncSHA256: e, FileSHA256: s, FileLength: l,
@@ -141,7 +141,7 @@ func (acc *account) buildMedia(ctx context.Context, req adapter.SendRequest, cap
 			name = "file"
 		}
 		return &waE2E.Message{DocumentMessage: &waE2E.DocumentMessage{URL: u, DirectPath: d, MediaKey: k, FileEncSHA256: e, FileSHA256: s, FileLength: l,
-			Mimetype: proto.String(mime), FileName: proto.String(name), Title: proto.String(name), Caption: cap, ContextInfo: ci}}, nil
+			Mimetype: proto.String(mime), FileName: proto.String(name), Title: proto.String(name), Caption: capt, ContextInfo: ci}}, nil
 	}
 }
 

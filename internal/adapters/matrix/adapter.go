@@ -79,8 +79,10 @@ func (a *Adapter) Info() adapter.Info {
 	}
 }
 
+// Start records the sink; accounts are added afterwards.
 func (a *Adapter) Start(_ context.Context, sink adapter.Sink) error { a.sink = sink; return nil }
 
+// Stop stops syncing on every account.
 func (a *Adapter) Stop(context.Context) error {
 	a.accounts.Each(func(_ string, acc *account) { acc.stopSync() })
 	return nil
@@ -120,6 +122,7 @@ func (a *Adapter) AddAccount(_ context.Context, accountID string, cfg json.RawMe
 	return nil
 }
 
+// RemoveAccount stops syncing, logs the device out and deletes the account's directory.
 func (a *Adapter) RemoveAccount(ctx context.Context, accountID string) error {
 	acc, ok := a.accounts.Delete(accountID)
 	if !ok {
@@ -133,6 +136,7 @@ func (a *Adapter) RemoveAccount(ctx context.Context, accountID string) error {
 	return os.RemoveAll(acc.dir)
 }
 
+// Reconnect restarts the sync loop of a logged-in account.
 func (a *Adapter) Reconnect(_ context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -147,6 +151,7 @@ func (a *Adapter) Reconnect(_ context.Context, accountID string) error {
 	return nil
 }
 
+// Logout logs the device out and removes the session file and crypto store.
 func (a *Adapter) Logout(ctx context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -164,6 +169,7 @@ func (a *Adapter) Logout(ctx context.Context, accountID string) error {
 
 // --- login ---
 
+// LoginStart asks for the fields of the password or token flow.
 func (a *Adapter) LoginStart(_ context.Context, accountID, flow string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -187,6 +193,7 @@ func (a *Adapter) LoginStart(_ context.Context, accountID, flow string) (model.L
 	return model.LoginStep{}, adapter.Errorf(adapter.ErrInvalidInput, "unknown flow %q", flow)
 }
 
+// LoginSubmit logs in with the submitted credentials and starts syncing.
 func (a *Adapter) LoginSubmit(ctx context.Context, accountID string, fields map[string]string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -243,6 +250,7 @@ func (a *Adapter) LoginSubmit(ctx context.Context, accountID string, fields map[
 	return model.LoginStep{Flow: lf.Name, Step: model.StepDone, Self: self}, nil
 }
 
+// LoginRefresh returns the current step of the login in progress.
 func (a *Adapter) LoginRefresh(_ context.Context, accountID string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -255,6 +263,7 @@ func (a *Adapter) LoginRefresh(_ context.Context, accountID string) (model.Login
 	return lf.Step, nil
 }
 
+// LoginCancel cancels the login in progress.
 func (a *Adapter) LoginCancel(_ context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -296,7 +305,7 @@ func (acc *account) loadSession() (session, error) {
 }
 
 func (acc *account) saveSession(s session) error {
-	b, _ := json.Marshal(s)
+	b, _ := json.Marshal(s) //nolint:gosec // G117: the session file is the token's store, written 0600
 	return os.WriteFile(filepath.Join(acc.dir, sessionFile), b, 0o600)
 }
 

@@ -100,10 +100,14 @@ func (s *Store) GetContact(ctx context.Context, accountID, id string) (model.Con
 	return c, err
 }
 
-// ListContacts pages the address book ordered by id.
-func (s *Store) ListContacts(ctx context.Context, accountID, q, cursor string, limit int) ([]model.Contact, string, error) {
+// ListContacts pages the address book ordered by id; only limits it to the listed user ids.
+func (s *Store) ListContacts(ctx context.Context, accountID, q, cursor string, limit int, only Only) ([]model.Contact, string, error) {
 	args := []any{accountID}
 	where := `account_id = ?`
+	if cond, a := only.clause("id"); cond != "" {
+		where += cond
+		args = append(args, a...)
+	}
 	if q != "" {
 		like := "%" + strings.ToLower(q) + "%"
 		where += ` AND (LOWER(names) LIKE ? OR LOWER(COALESCE(handle,'')) LIKE ? OR LOWER(id) LIKE ?)`

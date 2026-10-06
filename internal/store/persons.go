@@ -31,6 +31,8 @@ type PhoneMatch struct {
 type PersonFilter struct {
 	Tag string
 	Q   string
+	// Only limits the list to these person ids (scoped tokens).
+	Only Only
 }
 
 const personCols = `rowid, id, COALESCE(name,''), tags, COALESCE(notes,''), created_at, updated_at`
@@ -158,6 +160,10 @@ func (s *Store) ListPersons(ctx context.Context, f PersonFilter, cursor string, 
 			JOIN contacts c ON c.account_id = pl.account_id AND c.id = pl.user_id WHERE pl.person_id = p.id AND (LOWER(c.names) LIKE ?
 			OR LOWER(COALESCE(c.handle,'')) LIKE ? OR LOWER(COALESCE(c.phone,'')) LIKE ? OR LOWER(c.id) LIKE ?)))`
 		args = append(args, like, like, like, like, like, like)
+	}
+	if cond, a := f.Only.clause("p.id"); cond != "" {
+		where += cond
+		args = append(args, a...)
 	}
 	if cursor != "" {
 		ts, rowid, err := DecodeMessageCursor(cursor)

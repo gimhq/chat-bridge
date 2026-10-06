@@ -47,7 +47,7 @@ func (s *sink) Status(ctx context.Context, accountID string, st adapter.Status) 
 	}
 	if st.Status == model.StatusConnected {
 		c.clearLogin(accountID)
-		go c.syncContacts(accountID)
+		go c.syncContacts(accountID) //nolint:gosec // G118: the sync outlives the adapter's status call
 	}
 	return nil
 }
@@ -111,7 +111,7 @@ func (s *sink) Events(ctx context.Context, accountID string, evs []adapter.Event
 		return err
 	}
 	for _, id := range pending {
-		go c.fetchMedia(accountID, id)
+		go c.fetchMedia(accountID, id) //nolint:gosec // G118: the download outlives the adapter's event batch
 	}
 	return nil
 }

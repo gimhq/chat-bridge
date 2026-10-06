@@ -1,5 +1,5 @@
 // Package model holds the JSON types shared by the API, the core, and adapters.
-// Shapes follow docs/chat-api-spec.md.
+// Shapes follow docs/api.md.
 package model
 
 import (
@@ -540,4 +540,38 @@ type ResolvedChat struct {
 	ChatID string `json:"chat_id"`
 	Kind   string `json:"kind"`
 	UserID string `json:"user_id,omitempty"`
+}
+
+// Token is an API token limited to a scope (api.md §4.11). The admin token from the configuration
+// is not a Token. Secret is only set in the answer to the request that created the token.
+type Token struct {
+	ID         string     `json:"id"`
+	Name       string     `json:"name"`
+	Scope      TokenScope `json:"scope"`
+	CreatedAt  time.Time  `json:"created_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	Secret     string     `json:"token,omitempty"`
+}
+
+// TokenScope is the allowlist of a token: the listed persons with every contact linked to them,
+// the listed contacts with their direct chats, and the listed chats. ReadOnly takes away every
+// action that reaches the platform (send, edit, delete, react, typing, read receipts, uploads,
+// starting a chat).
+type TokenScope struct {
+	Persons  []string       `json:"persons"`
+	Contacts []TokenContact `json:"contacts"`
+	Chats    []TokenChat    `json:"chats"`
+	ReadOnly bool           `json:"read_only"`
+}
+
+// TokenContact names a contact in a token scope.
+type TokenContact struct {
+	AccountID string `json:"account_id"`
+	UserID    string `json:"user_id"`
+}
+
+// TokenChat names a chat in a token scope.
+type TokenChat struct {
+	AccountID string `json:"account_id"`
+	ChatID    string `json:"chat_id"`
 }

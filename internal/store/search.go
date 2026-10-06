@@ -14,8 +14,9 @@ const messageColsM = `m.seq, m.account_id, m.chat_id, m.id, m.sender_id, COALESC
 
 // SearchMessages finds messages whose text contains every whitespace-separated term of q, newest
 // first. Terms of three or more characters use the trigram FTS index; shorter terms fall back to
-// LIKE so two-character CJK queries still work. chatID narrows to one chat when set.
-func (s *Store) SearchMessages(ctx context.Context, accountID, chatID, q, cursor string, limit int) ([]Stored, string, error) {
+// LIKE so two-character CJK queries still work. chatID narrows to one chat when set; only limits
+// the search to the listed chats.
+func (s *Store) SearchMessages(ctx context.Context, accountID, chatID, q, cursor string, limit int, only Only) ([]Stored, string, error) {
 	terms := strings.Fields(q)
 	if len(terms) == 0 {
 		return nil, "", fmt.Errorf("empty query")
@@ -25,6 +26,10 @@ func (s *Store) SearchMessages(ctx context.Context, accountID, chatID, q, cursor
 	if chatID != "" {
 		where += ` AND m.chat_id = ?`
 		args = append(args, chatID)
+	}
+	if cond, a := only.clause("m.chat_id"); cond != "" {
+		where += cond
+		args = append(args, a...)
 	}
 	var fts []string
 	for _, t := range terms {

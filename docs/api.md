@@ -1,6 +1,6 @@
 # Platform-Agnostic Chat Bridge API
 
-Status: draft v1, 2026-09-12. Replaces the WhatsApp-only surface in `api.md` (no compatibility kept); §12 maps the current implementation onto it.
+Status: v1.
 
 ## 1. Purpose
 
@@ -27,13 +27,13 @@ Design rules:
 | Item | Rule |
 |---|---|
 | Base path | `/v1` |
-| Auth | `Authorization: Bearer <token>` on every `/v1/*` route. `/healthz` is open. |
+| Auth | `Authorization: Bearer <token>` on every `/v1/*` route: the admin token (`server.token`) or a scoped token (§4.11). `/healthz` and `/readyz` are open. |
 | Encoding | JSON request and response bodies, `Content-Type: application/json`. Media upload is multipart. |
 | Time | RFC 3339 UTC strings (`2026-09-12T13:05:00Z`). |
 | IDs | `account_id` is bridge-assigned (`[a-z0-9_-]{1,64}`). `chat_id`, `user_id`, `message_id` are platform-native, percent-encoded when used in a path. |
 | Pagination | `?cursor=&limit=` on every list. Response carries `next_cursor` (absent when exhausted). `limit` defaults to 50, max 500. Cursors are opaque. |
 | Idempotency | Every write that creates a message accepts `client_id`. Replaying the same `client_id` on the same chat returns the original message with `200` instead of `201`. |
-| Raw passthrough | `?raw=1` on message reads adds `raw`, the adapter's untouched platform payload. Off by default; large. |
+| Raw passthrough | `?raw=1` on `GET …/chats/{chat}/messages` and `GET …/messages/{msg}` adds `raw`, the adapter's untouched platform payload. Off by default; large. |
 
 ### 2.1 Errors
 
@@ -45,7 +45,8 @@ Design rules:
 |---|---|---|
 | 400 | `invalid_request` | malformed body, bad field, unknown enum value |
 | 401 | `unauthorized` | missing or wrong bearer token |
-| 404 | `not_found` | account, chat, message, or media does not exist |
+| 403 | `forbidden` | a scoped token called a route that needs the admin token, or a read-only token tried to act (§4.11) |
+| 404 | `not_found` | account, chat, message, or media does not exist, or is outside the token's scope |
 | 409 | `account_not_ready` | account is not `connected` (see §4.1) |
 | 409 | `conflict` | login already in progress, account id taken |
 | 413 | `too_large` | upload exceeds the configured cap |
@@ -172,11 +173,7 @@ Strings an account advertises. A request that needs an absent capability fails w
 | `chat.members` | list and change participants |
 | `self.update` | own profile name / bio / avatar can be changed |
 | `contact.alias` | owner-set alias written back to the platform or bridge store |
-| `keys.manage` | end-to-end encryption key management (§4.7a): device identity, cross-signing, key backup, export/import |
-| `contact.request` | friend requests exist and can be accepted/rejected |
-| `chat.invite` | group/room invites can be accepted/rejected |
-| `chat.join_request` | join requests to owned groups can be approved |
-| `call.reject` | incoming calls can be declined (accepting is never supported) |
+| `keys.manage` | end-to-end encryption key management (§4.12): device identity, cross-signing, key backup, export/import |
 | `presence` | online/offline events |
 | `receipts` | delivered/read receipts in |
 | `format.markdown` | bridge renders the common markdown subset (§3.5) |
@@ -273,7 +270,7 @@ and `[label](url)`. Nothing else is guaranteed.
 | `image`, `video`, `audio`, `voice`, `file`, `sticker` | `attachments[]` | `voice` is push-to-talk; `file` is any document. One attachment per message except `image` albums where the platform groups them. |
 | `location` | `location: {lat, lon, name?, address?, live_until?}` | |
 | `contact` | `contacts: [{name, phones[], emails[], vcard?}]` | |
-| `poll` | `poll: {question, options[], multi, closed}` | read-only unless `send.poll` |
+| `poll` | `poll: {question, options[], multi, closed}` | read-only |
 | `call` | `call: {kind: "voice" \| "video", state: "missed" \| "declined" \| "ended" \| "ringing", duration_s?}` | one message per call, updated as state changes |
 | `payment` | `payment: {kind: "transfer" \| "red_packet" \| "invoice", amount?, currency?, note?, state}` | WeChat 转账/红包, Telegram invoices; amounts absent when the platform hides them |
 | `system` | `system: {kind, actor?, targets[]?, value?}` | in-timeline notices; `kind` enum below |
@@ -430,7 +427,7 @@ built-in adapters:
 | `whatsapp` | — | `device_name` | `qr`, `phone` (pairing code) |
 | `telegram` | — (`api_id` / `api_hash` come from `adapters.telegram.*`, usually set once through `CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID|HASH`; either may be overridden per account) | `device_name` | `phone` (code, then 2FA password if enabled), `qr` (also asks for the 2FA password) |
 | `telegram`, instance `bridgev2` | — (`api_id` / `api_hash` from `adapters.telegram.*`) | `network`: mautrix-telegram connector settings as a YAML string or an object (`api_id`, `api_hash`, `device_info`, `sync`, `proxy`, `animated_sticker`, …; defaults from the connector's example config, animated stickers unconverted) | `phone` (code, then 2FA password), `qr` (then 2FA password), `bot` (BotFather token), `manual` (session JSON). Only with `-tags tgbridge` and `adapters.telegram.bridgev2`; see `adapter-protocol.md` §11 |
-| `matrix` | `homeserver` (base URL) | `device_name` | `password` (user + password), `token` (user + access token). Rooms are end-to-end encrypted transparently; see §4.7a |
+| `matrix` | `homeserver` (base URL) | `device_name` | `password` (user + password), `token` (user + access token). Rooms are end-to-end encrypted transparently; see §4.12 |
 | `signal` | — | `network`: mautrix-signal connector settings as a YAML string or an object (`device_name`, `displayname_template`, `sync_contacts_on_startup`, …; defaults from the connector's example config) | `qr` (link chat-bridge as a secondary device: scan the `sgnl://linkdevice` URI). Only present in builds with `-tags signal`; see `adapter-protocol.md` §11 |
 
 ### 4.2 Login (see §5)
@@ -452,7 +449,7 @@ built-in adapters:
 | POST | `/accounts/{a}/chats` | `{kind: "group", name, members[]}` | 201 Chat; needs `chat.create` |
 | POST | `/accounts/{a}/chats/{chat}/read` | `{up_to?: message_id}` | 204; needs `chat.read` |
 | POST | `/accounts/{a}/chats/{chat}/typing` | `{state: "typing" \| "paused"}` | 204; needs `chat.typing` |
-| PATCH | `/accounts/{a}/chats/{chat}` | `{muted?, archived?, name?, tags?}` | Chat; `tags` is bridge-local, the rest reach the platform |
+| PATCH | `/accounts/{a}/chats/{chat}` | `{muted?, archived?, name?, tags?}` | Chat; `name` renames the chat on the platform (`422 unsupported` when the adapter cannot), `muted`, `archived` and `tags` are bridge-local |
 
 `resolve` is how a consumer sends to a phone number or username without knowing platform ID
 formats: `{"handle": "+8613800000000"}` → `{"chat_id": "8613800000000@s.whatsapp.net", "kind": "direct"}`.
@@ -461,7 +458,7 @@ formats: `{"handle": "+8613800000000"}` → `{"chat_id": "8613800000000@s.whatsa
 
 | Method | Path | Body / Query | Result |
 |---|---|---|---|
-| GET | `/accounts/{a}/chats/{chat}/messages` | `cursor, limit, before?, after?, backfill=1?` | `{messages: [Message], next_cursor}` newest first |
+| GET | `/accounts/{a}/chats/{chat}/messages` | `cursor, limit, before?, after?, backfill=1?, raw=1?` | `{messages: [Message], next_cursor}` newest first |
 | POST | `/accounts/{a}/chats/{chat}/messages` | SendRequest | 201 Message (`status: pending` or `sent`) |
 | GET | `/accounts/{a}/messages/{msg}` | `raw=1?` | Message |
 | PATCH | `/accounts/{a}/messages/{msg}` | `{content: {type: "text", text}}` | Message; needs `message.edit` |
@@ -501,7 +498,7 @@ Only `text`, media types, `location`, and `contact` are sendable.
 
 | Method | Path | Body / Query | Result |
 |---|---|---|---|
-| POST | `/accounts/{a}/media` | multipart `file`, optional `kind` | 201 Attachment with `state: ready`, `media_id` prefixed `upl_`. Unreferenced uploads expire after 1 h. |
+| POST | `/accounts/{a}/media` | multipart `file` | 201 Attachment with `state: ready`, `media_id` prefixed `upl_`. Unreferenced uploads expire after 1 h. |
 | GET | `/media/{id}` | | bytes, original `Content-Type`, `Content-Disposition`; supports `Range` |
 | GET | `/media/{id}/meta` | | Attachment |
 | POST | `/media/{id}/fetch` | | starts download for `state: remote`; returns Attachment `pending` |
@@ -517,23 +514,6 @@ Media IDs are global (not account-scoped) because the consumer already got them 
 | PATCH | `/accounts/{a}/contacts/{user}` | `{alias?, blocked?}` | Contact; `alias` needs `contact.alias` |
 | GET | `/accounts/{a}/contacts/{user}/chats` | | `{chats: [Chat]}` — the direct chats with the user (chat id is the user, or the user is a member of a direct room) and the chats they are a current member of, most recent first, with `last_message` |
 | GET | `/accounts/{a}/contacts/{user}/messages` | `cursor, limit, scope=direct\|all` | `{messages, next_cursor}` newest first; `direct` (default) = the whole conversation in their direct chats, `all` = also their own messages in other chats |
-
-### 4.7a Keys (end-to-end encryption)
-
-Only platforms with client-side encryption expose these (Matrix today; capability `keys.manage`,
-others answer `422 unsupported`). Messages in encrypted rooms are decrypted and encrypted by the
-bridge without any call here; these endpoints establish trust and durability of the keys.
-
-| Method | Path | Body | Result |
-|---|---|---|---|
-| GET | `/accounts/{a}/keys` | | `{device_id, fingerprint, cross_signed, backup: {version, enabled}, sessions}` |
-| POST | `/accounts/{a}/keys/verify` | `{recovery_key}` | `{cross_signed, backup_version, sessions_imported}` — cross-signs this device with the account's recovery key (other clients then show it as verified) and restores the server-side key backup so history from before the login decrypts. The recovery key is used once and not stored. |
-| POST | `/accounts/{a}/keys/export` | `{passphrase}` | encrypted key file (`application/octet-stream`, Element-compatible) |
-| POST | `/accounts/{a}/keys/import` | multipart `file`, `passphrase` | `{sessions_imported}` |
-
-An event that cannot be decrypted is stored as `content.type: unsupported` with
-`platform_type: m.room.encrypted` plus a `platform.event` (`decrypt_failed`) carrying the reason;
-once the key arrives (backup restore, key request answered) new events decrypt normally.
 
 ### 4.7 Persons
 
@@ -629,8 +609,89 @@ adapter that answers requests (`422 unsupported` otherwise). `GET …/requests` 
 
 | Method | Path | Result |
 |---|---|---|
-| GET | `/healthz` | `{"status":"ok"}`, no auth |
+| GET | `/healthz` | `{"status":"ok"}`, no auth; the process is up |
+| GET | `/readyz` | `{"status":"ok"}`, no auth; `503` with `{"status":"unavailable"}` when the database does not answer |
 | GET | `/v1/status` | `{version, uptime_s, accounts: [{id, platform, status}], events_cursor}` |
+
+### 4.11 Tokens
+
+`server.token` is the admin token: unrestricted, and the only one that manages the others. A
+scoped token is for one consumer and reaches only what its scope lists.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/tokens` | | `{tokens: [Token]}`, admin only |
+| POST | `/tokens` | `{name, scope}` | 201 Token with `token`, the secret, shown this once; admin only |
+| PATCH | `/tokens/{id}` | `{name?, scope?}` | Token; `scope` replaces the old one; admin only |
+| DELETE | `/tokens/{id}` | | revokes; 204; admin only. Requests and open streams using the token fail with `401` |
+| GET | `/tokens/self` | | the calling token: `{"admin": true}`, or the Token |
+
+```json
+{
+  "id": "tok_5c0c…",
+  "name": "family-assistant",
+  "scope": {
+    "persons":  ["per_01J7Q0X5R2K3M4N5P6Q7R8S9T0"],
+    "contacts": [{"account_id": "wa-main", "user_id": "8613800000000@s.whatsapp.net"}],
+    "chats":    [{"account_id": "wa-main", "chat_id": "120363012345678901@g.us"}],
+    "read_only": false
+  },
+  "created_at": "2026-10-03T16:54:00Z",
+  "last_used_at": null,
+  "token": "cbt_…"
+}
+```
+
+The scope is an allowlist, resolved on every request:
+
+- allowed contacts = `contacts` plus every contact currently linked to a person in `persons`;
+- allowed chats = the direct chats with the allowed contacts plus `chats`. A group is reachable
+  only when it is listed in `chats`; an allowed contact's messages in other groups are not.
+
+`read_only: true` takes away everything that acts on the platform: sending, editing, deleting,
+reacting, typing, read receipts (`…/read`), uploads and `chats/resolve` answer `403 forbidden`.
+Reading, searching, events, `backfill=1` and `POST /media/{id}/fetch` stay available.
+
+`persons` must exist and every `account_id` must name an account when the scope is stored;
+contacts and chats may be listed before the bridge has seen them. Only the SHA-256 of the secret
+is stored, so a lost secret cannot be shown again: create a new token.
+
+What a scoped token can do:
+
+| Routes | Behavior |
+|---|---|
+| `GET …/chats`, `GET …/chats/{chat}`, `POST …/chats/{chat}/read`, `…/typing`, `GET` and `POST …/chats/{chat}/messages` | allowed chats only; others answer `404` |
+| `POST …/chats/resolve` | starts a conversation with an allowed contact: `handle` must be the contact's user id, or the `handle` or `phone` the bridge holds for it, and the platform must answer with that contact; anything else is `404`, without a platform lookup when the handle names no allowed contact. The direct chat it returns is stored and becomes an allowed chat |
+| `GET`, `PATCH`, `DELETE …/messages/{msg}`, `PUT`, `DELETE …/reactions/{emoji}` | the message must be in an allowed chat; else `404` |
+| `GET …/messages/search` | results from allowed chats only |
+| `GET …/contacts`, `…/contacts/{user}`, `…/contacts/{user}/chats`, `…/contacts/{user}/messages` | allowed contacts only; the views stay inside the allowed chats and `scope=all` is treated as `direct` |
+| `GET /persons`, `/persons/{p}`, `/persons/{p}/chats`, `/persons/{p}/messages` | the listed persons only; `scope=all` is treated as `direct` |
+| `GET /media/{id}`, `/media/{id}/meta`, `POST /media/{id}/fetch` | media of a message in an allowed chat; media no message references (uploads, avatars) answers `404` |
+| `POST /accounts/{a}/media` | allowed on an account the scope touches; a send may attach that account's uploads |
+| `GET /events`, `/events/stream` | `message.*`, `chat.*` of allowed chats, `contact.updated` and `presence` of allowed contacts, `person.updated` of listed persons, and `account.status` of the accounts the scope touches, without `config`, `device`, `stats` |
+| `GET /accounts`, `GET /accounts/{a}` | the accounts the scope touches, always in the list view |
+| everything else | `403 forbidden` |
+
+A platform that re-addresses a user (WhatsApp phone number → LID) changes the ids a scope lists
+by `contacts` or `chats`; such a token loses access until its scope is updated. A scope that lists
+`persons` follows the person's links and is not affected.
+
+### 4.12 Keys (end-to-end encryption)
+
+Only platforms with client-side encryption expose these (Matrix today; capability `keys.manage`,
+others answer `422 unsupported`). Messages in encrypted rooms are decrypted and encrypted by the
+bridge without any call here; these endpoints establish trust and durability of the keys.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| GET | `/accounts/{a}/keys` | | `{device_id, fingerprint, cross_signed, backup: {version, enabled}, sessions}` |
+| POST | `/accounts/{a}/keys/verify` | `{recovery_key}` | `{cross_signed, backup_version, sessions_imported}` — cross-signs this device with the account's recovery key (other clients then show it as verified) and restores the server-side key backup so history from before the login decrypts. The recovery key is used once and not stored. |
+| POST | `/accounts/{a}/keys/export` | `{passphrase}` | encrypted key file (`application/octet-stream`, Element-compatible) |
+| POST | `/accounts/{a}/keys/import` | multipart `file`, `passphrase` | `{sessions_imported}` |
+
+An event that cannot be decrypted is stored as `content.type: unsupported` with
+`platform_type: m.room.encrypted` plus a `platform.event` (`decrypt_failed`) carrying the reason;
+once the key arrives (backup restore, key request answered) new events decrypt normally.
 
 ## 5. Login flows
 
@@ -658,7 +719,6 @@ LoginStep:
 {"flow": "phone", "step": "input", "input": {"fields": [{"name": "otp", "type": "code", "label": "SMS code", "pattern": "^[0-9]{5}$"}]}}
 {"flow": "qr", "step": "display", "display": {"type": "qr", "data": "2@AbCdEf…,base64pubkey==,base64adv==", "expires_at": "2026-09-12T10:01:50Z"}}
 {"flow": "phone", "step": "display", "display": {"type": "code", "data": "ABCD-EFGH", "expires_at": "2026-09-12T10:04:30Z"}}
-{"flow": "sso", "step": "display", "display": {"type": "url", "data": "https://matrix.example.org/_matrix/client/v3/login/sso/redirect?redirectUrl=…", "expires_at": "2026-09-12T10:11:30Z"}}
 {"flow": "phone", "step": "done", "self": {"id": "8613800000000@s.whatsapp.net", "name": "Deyang", "handle": "+8613800000000", "phone": "+8613800000000"}}
 {"flow": "phone", "step": "failed", "error": {"code": "platform_error", "message": "invalid code"}}
 ```
@@ -671,7 +731,7 @@ Known flows per platform:
 |---|---|
 | whatsapp | `qr`, `phone` (pairing code) |
 | telegram | `phone` (OTP, optional 2FA password), `qr` |
-| matrix | `password` (user + password), `sso` (URL, then token), `token` (paste an access token) |
+| matrix | `password` (user + password), `token` (paste an access token) |
 | wechat | `qr` |
 | signal | `qr` (link device) |
 
@@ -794,7 +854,8 @@ Full design in `storage.md`. The contract the API relies on:
 
 ## 10. Security
 
-- One bearer token per consumer; tokens may be scoped to accounts (`config.token_accounts`).
+- One bearer token per consumer: the admin token for the owner and the management UI, a scoped
+  token (§4.11) for every other consumer. Scoped tokens are stored as SHA-256 hashes.
 - Webhook bodies are HMAC-signed; consumers must verify.
 - Message bodies are never logged at `info` or above.
 - Media is served only to bearer-authenticated callers; no public URLs.
@@ -807,21 +868,3 @@ mautrix bridgev2 network connector (Signal today; `adapter-protocol.md` §11), o
 a WebSocket JSON-RPC connection. The adapter declares capabilities, login flows, and a config
 schema at connect time, and the core publishes them under `GET /platforms`. Nothing in this
 document is specific to a language or a process boundary.
-
-## 12. Migration from the current WhatsApp API
-
-| Current | New |
-|---|---|
-| `GET /v1/status` | `GET /v1/accounts/{a}` (+ `GET /v1/status` for process-level) |
-| `POST /v1/pair/code {phone}` | `POST /v1/accounts/{a}/login {flow:"phone"}` then `/login/submit {fields:{phone}}` |
-| QR in `/v1/status.qr_code` | `POST /v1/accounts/{a}/login {flow:"qr"}` then `GET /v1/accounts/{a}/login` |
-| `POST /v1/logout` | `POST /v1/accounts/{a}/logout` |
-| `POST /v1/messages/text {to,text}` | `POST /v1/accounts/{a}/chats/resolve {handle}` once, then `POST …/chats/{chat}/messages {content:{type:"text",text}}` |
-| `POST /v1/messages/media` multipart | `POST /v1/accounts/{a}/media` then `POST …/chats/{chat}/messages` with `attachments[{media_id}]` |
-| `GET /v1/messages?chat=` | `GET /v1/accounts/{a}/chats/{chat}/messages` |
-| `GET /v1/messages/{id}` | `GET /v1/accounts/{a}/messages/{id}` |
-| `GET /v1/chats` | `GET /v1/accounts/{a}/chats` |
-| `GET /v1/media/{id}` | unchanged; `?meta=1` becomes `/media/{id}/meta` |
-| `CHATBRIDGE_WEBHOOK_URL` | `POST /v1/webhooks` (or keep the env var as a bootstrap subscription) |
-| message `chat_jid`, `sender_jid`, `push_name`, `type`, `text`, `media_id` | `chat_id`, `sender.id`, `sender.name`, `content.type`, `content.text`, `content.attachments[0].media_id` |
-| message `type: reaction` / `protocol` | reaction → `message.reaction` event; protocol → `content.type: system` or `unsupported` |

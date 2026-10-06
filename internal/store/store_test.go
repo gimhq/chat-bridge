@@ -288,35 +288,35 @@ func TestSearchRenameAndBlock(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	got, next, err := s.SearchMessages(ctx, "a1", "", "tomorrow", "", 10)
+	got, next, err := s.SearchMessages(ctx, "a1", "", "tomorrow", "", 10, Only{})
 	if err != nil || len(got) != 2 || got[0].ID != "m3" || got[1].ID != "m1" || next != "" {
 		t.Fatalf("search: %v %v", got, err)
 	}
-	got, _, _ = s.SearchMessages(ctx, "a1", "c1", "tomorrow", "", 10)
+	got, _, _ = s.SearchMessages(ctx, "a1", "c1", "tomorrow", "", 10, Only{})
 	if len(got) != 1 || got[0].ID != "m1" {
 		t.Fatalf("search in chat: %v", got)
 	}
-	got, _, _ = s.SearchMessages(ctx, "a1", "", "开会", "", 10) // two characters: LIKE path
+	got, _, _ = s.SearchMessages(ctx, "a1", "", "开会", "", 10, Only{}) // two characters: LIKE path
 	if len(got) != 1 || got[0].ID != "m2" {
 		t.Fatalf("search cjk short: %v", got)
 	}
-	got, _, _ = s.SearchMessages(ctx, "a1", "", "上开会", "", 10) // three characters: trigram path
+	got, _, _ = s.SearchMessages(ctx, "a1", "", "上开会", "", 10, Only{}) // three characters: trigram path
 	if len(got) != 1 || got[0].ID != "m2" {
 		t.Fatalf("search cjk trigram: %v", got)
 	}
-	got, _, _ = s.SearchMessages(ctx, "a1", "", "tomorrow ten", "", 10)
+	got, _, _ = s.SearchMessages(ctx, "a1", "", "tomorrow ten", "", 10, Only{})
 	if len(got) != 1 || got[0].ID != "m1" {
 		t.Fatalf("search all terms: %v", got)
 	}
-	got, next, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", "", 1)
+	got, next, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", "", 1, Only{})
 	if len(got) != 1 || next == "" {
 		t.Fatalf("search page 1: %v %q", got, next)
 	}
-	got, next, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", next, 1)
+	got, next, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", next, 1, Only{})
 	if len(got) != 1 || got[0].ID != "m1" || next != "" {
 		t.Fatalf("search page 2: %v %q", got, next)
 	}
-	if _, _, err := s.SearchMessages(ctx, "a1", "", "  ", "", 1); err == nil {
+	if _, _, err := s.SearchMessages(ctx, "a1", "", "  ", "", 1, Only{}); err == nil {
 		t.Fatal("empty query must fail")
 	}
 	// Edits keep the index in step.
@@ -324,7 +324,7 @@ func TestSearchRenameAndBlock(t *testing.T) {
 	if _, err := s.UpdateMessage(ctx, st.Seq(), func(m *model.Message) { m.Content.Text = "now about tomorrow" }); err != nil {
 		t.Fatal(err)
 	}
-	if got, _, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", "", 10); len(got) != 3 {
+	if got, _, _ = s.SearchMessages(ctx, "a1", "", "tomorrow", "", 10, Only{}); len(got) != 3 {
 		t.Fatalf("after edit: %v", got)
 	}
 

@@ -90,6 +90,15 @@ CREATE TABLE person_unlinks (                -- pairs the owner split; auto-link
   PRIMARY KEY (account_id, user_id, other_account_id, other_user_id)
 );
 
+CREATE TABLE tokens (                        -- scoped API tokens (api.md §4.11); the admin token is config
+  id            TEXT PRIMARY KEY,              -- tok_<uuid>
+  name          TEXT NOT NULL,
+  secret_hash   TEXT NOT NULL UNIQUE,          -- hex SHA-256 of the secret; the secret itself is never stored
+  scope         TEXT NOT NULL DEFAULT '{}',    -- json {persons[], contacts[], chats[]}
+  created_at    INTEGER NOT NULL,
+  last_used_at  INTEGER                        -- updated at most once per minute
+);
+
 CREATE TABLE chats (
   account_id        TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
   id                TEXT NOT NULL,
@@ -345,27 +354,32 @@ ties deterministically.
 
 ## 7. Retention and GC
 
-One background job every 10 minutes, each step its own transaction, bounded batch size:
+One background job every 10 minutes, each step its own transaction. The first table is what
+runs today; the second is designed but not built (task `20260913-0530-api-framework-completion`),
+and its config keys do not exist yet.
 
-| What | Default | Config key |
+| What | Kept for | Config key |
+|---|---|---|
+| `events` | 7 days | `events.retention_days` |
+| `events` of type `chat.typing`, `presence` | 1 hour | fixed |
+| `events` of type `platform.event` | 24 hours | fixed |
+| Unreferenced uploads | 1 hour | fixed |
+| Pending requests | until `expires_at`, then `expired` | platform-driven |
+
+| Planned | Default | Config key |
 |---|---|---|
 | Messages, chats, contacts, reactions | forever | `retention.messages_days` (0 = forever) |
 | `raw_payloads` | 7 days | `retention.raw_days` |
-| `events` | 7 days | `retention.events_days` |
-| `events` of type `chat.typing`, `presence` | 1 hour | fixed |
-| `events` of type `platform.event` | 24 hours | fixed |
 | `receipts` rows (rollup stays on the message) | 30 days | `retention.receipts_days` |
 | Media bytes, by last access | 90 days, or oldest-first when `media/` exceeds `media.max_gb` (default 20) | `retention.media_days`, `media.max_gb` |
-| Unreferenced uploads | 1 hour | fixed |
 | Ephemeral messages | at `expires_at` | platform-driven |
 
-Purging media flips `state` to `purged` and keeps `remote_ref`, so a later `POST /media/{id}/fetch`
-can bring it back if the platform still has it. Message rows are never physically deleted by
-retention unless `retention.messages_days > 0`; deleting an account is the only hard delete.
+Purging media will flip `state` to `purged` and keep `remote_ref`, so a later
+`POST /media/{id}/fetch` can bring it back if the platform still has it. Until then nothing but
+deleting an account removes messages or media bytes.
 
-Webhook delivery reads `events` by `cursor`; a webhook paused for longer than
-`retention.events_days` resumes from the oldest surviving event and the response includes
-`gap: true`.
+Webhook delivery reads `events` by `cursor`; a webhook paused for longer than the event retention
+resumes from the oldest surviving event and the request body includes `gap: true`.
 
 ## 8. Migrations
 
@@ -374,13 +388,14 @@ Webhook delivery reads `events` by `cursor`; a webhook paused for longer than
 to start on a database newer than it knows. No down migrations. Adapter-private databases are
 versioned by their own libraries.
 
-While chat-bridge is in development there is no data to carry forward: the schema was reset to a
-single base version, and a database created by an earlier build (version above 1) is refused;
-delete the data directory. Once a database is deployed, schema changes append migrations again.
+The schema was reset to a single base version before v0.1.0. A database created by an earlier
+build carries version numbers from the old sequence and must not be reused: delete the data
+directory. Since v0.1.0, schema changes append migrations.
 
 | Version | Change |
 |---|---|
 | 1 | base schema (§2): accounts with instance binding, contacts with `phone_norm`, chats, members, messages with trigram FTS5, reactions, receipts, media, raw payloads, events, webhooks, requests, persons; indexes on senders and memberships for identity changes |
+| 2 | `tokens`: scoped API tokens |
 
 ## 9. Sizing
 
@@ -388,14 +403,3 @@ Personal use, one account, 200 messages/day: about 75 k `messages` rows/year at 
 including `content`, 75 MB/year before media. `raw_payloads` at 7 days stays under 10 MB.
 `events` at 7 days and ~5 events per message stays under 20 MB. Media dominates; the 20 GB cap
 with LRU purge is the only real limit. FTS5 roughly doubles the text footprint.
-
-## 10. What the current implementation must change
-
-| Current (`internal/store`) | New |
-|---|---|
-| `messages` PK `(chat_jid, id)`, no `account_id` | `seq` rowid + unique `(account_id, chat_id, id)` |
-| `type`, `text`, `push_name`, `media_id` columns | `type` + `text` kept as denormalised; body in `content` json; `sender_name`; media links from `media.message_seq` |
-| `ListChats` derived with `GROUP BY` at read time | materialised `chats` row maintained on write |
-| `media.path` column | derived from `sha256`; `state`, `remote_ref`, dimensions added |
-| webhook POST inline from `handleMessage`, no retry | `events` append in the same tx; delivery worker reads by cursor |
-| `whatsmeow.db` in `data/` | `data/accounts/<id>/whatsmeow.db` |

@@ -68,7 +68,7 @@ type jsonFile struct {
 
 func loadJSON(path string, into any) (*jsonFile, error) {
 	f := &jsonFile{path: path, doc: into}
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // G304: path is built from the account's data directory
 	if errors.Is(err, os.ErrNotExist) {
 		return f, nil
 	}

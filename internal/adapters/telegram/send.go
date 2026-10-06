@@ -120,20 +120,20 @@ func (acc *account) sendMedia(ctx context.Context, api *tg.Client, b *message.Bu
 	if err != nil {
 		return nil, base.PlatformErr("upload", err)
 	}
-	cap := acc.styled(req.Content.Text, req.Content.Format)
+	caption := acc.styled(req.Content.Text, req.Content.Format)
 	switch req.Content.Type {
 	case model.ContentImage:
-		return b.Media(ctx, message.UploadedPhoto(f, cap...))
+		return b.Media(ctx, message.UploadedPhoto(f, caption...))
 	case model.ContentVideo:
-		return b.Media(ctx, message.UploadedDocument(f, cap...).MIME(meta.Mime).Filename(name).Video().Resolution(meta.Width, meta.Height).DurationSeconds(int(meta.DurationMs/1000)))
+		return b.Media(ctx, message.UploadedDocument(f, caption...).MIME(meta.Mime).Filename(name).Video().Resolution(meta.Width, meta.Height).Duration(time.Duration(meta.DurationMs)*time.Millisecond))
 	case model.ContentAudio:
-		return b.Media(ctx, message.UploadedDocument(f, cap...).MIME(meta.Mime).Filename(name).Audio().DurationSeconds(int(meta.DurationMs/1000)))
+		return b.Media(ctx, message.UploadedDocument(f, caption...).MIME(meta.Mime).Filename(name).Audio().DurationSeconds(int(meta.DurationMs/1000)))
 	case model.ContentVoice:
 		return b.Media(ctx, message.UploadedDocument(f).MIME(meta.Mime).Voice().DurationSeconds(int(meta.DurationMs/1000)))
 	case model.ContentSticker:
 		return b.Media(ctx, message.UploadedDocument(f).MIME(meta.Mime).Filename(name))
 	default:
-		return b.Media(ctx, message.File(f, cap...).MIME(meta.Mime).Filename(name))
+		return b.Media(ctx, message.File(f, caption...).MIME(meta.Mime).Filename(name))
 	}
 }
 

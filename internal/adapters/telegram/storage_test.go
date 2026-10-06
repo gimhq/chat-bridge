@@ -43,7 +43,7 @@ func TestFileStateRoundTrip(t *testing.T) {
 		t.Fatalf("channel pts: %d %v", pts, found)
 	}
 	n := 0
-	_ = st2.ForEachChannels(ctx, 1, func(_ context.Context, channelID int64, pts int) error { n++; return nil })
+	_ = st2.ForEachChannels(ctx, 1, func(context.Context, int64, int) error { n++; return nil })
 	if n != 2 {
 		t.Fatalf("channels: %d", n)
 	}

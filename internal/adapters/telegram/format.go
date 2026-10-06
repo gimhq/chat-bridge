@@ -191,10 +191,10 @@ func inlineHTML(s string) string {
 			out.WriteString("_")
 			i++
 		case r == '[':
-			if close := indexRune(rs, i+1, "]"); close > 0 && close+1 < len(rs) && rs[close+1] == '(' {
-				if end := indexRune(rs, close+2, ")"); end > 0 {
-					url := string(rs[close+2 : end])
-					out.WriteString(`<a href="` + html.EscapeString(url) + `">` + inlineHTML(string(rs[i+1:close])) + "</a>")
+			if closing := indexRune(rs, i+1, "]"); closing > 0 && closing+1 < len(rs) && rs[closing+1] == '(' {
+				if end := indexRune(rs, closing+2, ")"); end > 0 {
+					url := string(rs[closing+2 : end])
+					out.WriteString(`<a href="` + html.EscapeString(url) + `">` + inlineHTML(string(rs[i+1:closing])) + "</a>")
 					i = end + 1
 					continue
 				}

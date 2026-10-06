@@ -402,7 +402,7 @@ func (in *virtualIntent) SendState(ctx context.Context, roomID id.RoomID, evType
 	return &mautrix.RespSendEvent{EventID: evtID}, nil
 }
 
-func (in *virtualIntent) MarkRead(ctx context.Context, roomID id.RoomID, eventID id.EventID, ts time.Time) error {
+func (in *virtualIntent) MarkRead(ctx context.Context, _ id.RoomID, eventID id.EventID, ts time.Time) error {
 	m, err := in.vm.acc.bridge.DB.Message.GetPartByMXID(ctx, eventID)
 	if err != nil || m == nil {
 		return nil
@@ -436,11 +436,11 @@ func (in *virtualIntent) DownloadMedia(ctx context.Context, uri id.ContentURIStr
 	if err != nil {
 		return nil, err
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	return io.ReadAll(rc)
 }
 
-func (in *virtualIntent) DownloadMediaToFile(ctx context.Context, uri id.ContentURIString, file *event.EncryptedFileInfo, writable bool, cb func(*os.File) error) error {
+func (in *virtualIntent) DownloadMediaToFile(ctx context.Context, uri id.ContentURIString, file *event.EncryptedFileInfo, _ bool, cb func(*os.File) error) error {
 	data, err := in.DownloadMedia(ctx, uri, file)
 	if err != nil {
 		return err
@@ -449,8 +449,8 @@ func (in *virtualIntent) DownloadMediaToFile(ctx context.Context, uri id.Content
 	if err != nil {
 		return err
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
+	defer func() { _ = os.Remove(f.Name()) }()
+	defer func() { _ = f.Close() }()
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
@@ -482,19 +482,19 @@ func (in *virtualIntent) UploadMediaStream(ctx context.Context, _ id.RoomID, siz
 	if err != nil {
 		return "", nil, err
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
+	defer func() { _ = os.Remove(f.Name()) }()
+	defer func() { _ = f.Close() }()
 	res, err := cb(f)
 	if err != nil {
 		return "", nil, err
 	}
 	src := f
 	if res != nil && res.ReplacementFile != "" {
-		defer os.Remove(res.ReplacementFile)
+		defer func() { _ = os.Remove(res.ReplacementFile) }()
 		if src, err = os.Open(res.ReplacementFile); err != nil {
 			return "", nil, err
 		}
-		defer src.Close()
+		defer func() { _ = src.Close() }()
 	}
 	st, err := src.Stat()
 	if err != nil {

@@ -54,6 +54,67 @@ type EventFilter struct {
 	// Person narrows to events about one person: its own updates, and events on a linked
 	// account whose sender, user, chat or subject id is a linked contact.
 	Person *PersonScope
+	// Scope narrows to what a scoped token may see; nil does not restrict.
+	Scope *EventScope
+}
+
+// EventScope is the resolved allowlist of a scoped token as the event log needs it.
+type EventScope struct {
+	Accounts []string
+	Chats    []ChatRef
+	Contacts []LinkRef
+	Persons  []string
+}
+
+// Event types by the payload key that names their chat or contact (api.md §6). A type that is not
+// listed here never reaches a scoped token.
+var (
+	scopeByChatID = []string{model.EvMessageNew, model.EvMessageUpdated, model.EvMessageDeleted, model.EvMessageReaction, model.EvMessageReceipt, model.EvChatTyping}
+	scopeByChat   = []string{model.EvChatNew, model.EvChatUpdated}
+)
+
+// clause returns the SQL condition that keeps only events inside the scope.
+func (sc *EventScope) clause() (string, []any) {
+	var conds []string
+	var args []any
+	pairs := func(types []string, key string, n int, each func(i int) (string, string)) {
+		if n == 0 {
+			return
+		}
+		conds = append(conds, `(type IN (`+placeholders(len(types))+`) AND (account_id, json_extract(data, '$.`+key+`')) IN (VALUES `+
+			strings.TrimSuffix(strings.Repeat("(?,?),", n), ",")+`))`)
+		for _, t := range types {
+			args = append(args, t)
+		}
+		for i := 0; i < n; i++ {
+			a, b := each(i)
+			args = append(args, a, b)
+		}
+	}
+	chat := func(i int) (string, string) { return sc.Chats[i].AccountID, sc.Chats[i].ChatID }
+	contact := func(i int) (string, string) { return sc.Contacts[i].AccountID, sc.Contacts[i].UserID }
+	pairs(scopeByChatID, "chat_id", len(sc.Chats), chat)
+	pairs(scopeByChat, "id", len(sc.Chats), chat)
+	pairs([]string{model.EvContactUpdated}, "id", len(sc.Contacts), contact)
+	pairs([]string{model.EvPresence}, "user_id", len(sc.Contacts), contact)
+	if len(sc.Persons) > 0 {
+		conds = append(conds, `(type = ? AND json_extract(data, '$.id') IN (`+placeholders(len(sc.Persons))+`))`)
+		args = append(args, model.EvPersonUpdated)
+		for _, p := range sc.Persons {
+			args = append(args, p)
+		}
+	}
+	if len(sc.Accounts) > 0 {
+		conds = append(conds, `(type = ? AND account_id IN (`+placeholders(len(sc.Accounts))+`))`)
+		args = append(args, model.EvAccountStatus)
+		for _, a := range sc.Accounts {
+			args = append(args, a)
+		}
+	}
+	if len(conds) == 0 {
+		return `0`, nil
+	}
+	return `(` + strings.Join(conds, " OR ") + `)`, args
 }
 
 // PersonScope is a person id with its links, resolved when the filter is built.
@@ -88,6 +149,11 @@ func (s *Store) ListEvents(ctx context.Context, after int64, f EventFilter, limi
 			args = append(args, l.AccountID, l.UserID)
 		}
 		where += ` AND (` + strings.Join(conds, " OR ") + `)`
+	}
+	if f.Scope != nil {
+		cond, a := f.Scope.clause()
+		where += ` AND ` + cond
+		args = append(args, a...)
 	}
 	args = append(args, limit)
 	rows, err := s.q.QueryContext(ctx, `SELECT id, COALESCE(account_id,''), type, ts_ms, data FROM events WHERE `+where+` ORDER BY id LIMIT ?`, args...)

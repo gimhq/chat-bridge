@@ -15,6 +15,16 @@ func (c *Core) ListChats(ctx context.Context, accountID string, f store.ChatFilt
 	if _, err := c.st.GetAccount(ctx, accountID); errors.Is(err, store.ErrNotFound) {
 		return nil, "", errNotFound("account")
 	}
+	sc, err := c.scopeOf(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if sc != nil {
+		if !sc.accounts[accountID] {
+			return nil, "", errNotFound("account")
+		}
+		f.Only = sc.chatIDs(accountID)
+	}
 	chats, next, err := c.st.ListChats(ctx, accountID, f, cursor, limit)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, "", errInvalid("bad cursor")
@@ -26,6 +36,9 @@ func (c *Core) ListChats(ctx context.Context, accountID string, f store.ChatFilt
 func (c *Core) GetChat(ctx context.Context, accountID, chatID string) (model.Chat, error) {
 	row, ad, err := c.adapterFor(ctx, accountID)
 	if err != nil {
+		return model.Chat{}, err
+	}
+	if err := c.allowChat(ctx, accountID, chatID); err != nil {
 		return model.Chat{}, err
 	}
 	ch, err := c.st.GetChat(ctx, accountID, chatID)
@@ -86,8 +99,12 @@ func (c *Core) storeChatInfo(ctx context.Context, accountID string, fresh model.
 	})
 }
 
-// ResolveChat maps a handle to a chat id.
+// ResolveChat maps a handle to a chat id. A scoped token may only resolve a contact in its scope;
+// the direct chat it gets is stored, which makes it reachable for that token from then on.
 func (c *Core) ResolveChat(ctx context.Context, accountID, handle string) (model.ResolvedChat, error) {
+	if err := c.allowWrite(ctx); err != nil {
+		return model.ResolvedChat{}, err
+	}
 	_, ad, err := c.connected(ctx, accountID)
 	if err != nil {
 		return model.ResolvedChat{}, err
@@ -99,11 +116,39 @@ func (c *Core) ResolveChat(ctx context.Context, accountID, handle string) (model
 	if handle == "" {
 		return model.ResolvedChat{}, errInvalid("handle is required")
 	}
-	return r.ResolveChat(ctx, accountID, handle)
+	sc, err := c.scopeOf(ctx)
+	if err != nil {
+		return model.ResolvedChat{}, err
+	}
+	if sc == nil {
+		return r.ResolveChat(ctx, accountID, handle)
+	}
+	userID, err := c.scopedHandle(ctx, sc, accountID, handle)
+	if err != nil {
+		return model.ResolvedChat{}, err
+	}
+	res, err := r.ResolveChat(ctx, accountID, handle)
+	if err != nil {
+		return model.ResolvedChat{}, err
+	}
+	if res.Kind != model.ChatDirect || res.UserID != userID {
+		return model.ResolvedChat{}, errNotFound("chat")
+	}
+	direct := model.Chat{ID: res.ChatID, Kind: model.ChatDirect, Participants: []model.Participant{{ID: userID, Role: "member"}}}
+	if err := c.storeChatInfo(ctx, accountID, direct, false); err != nil {
+		return model.ResolvedChat{}, err
+	}
+	return res, nil
 }
 
 // MarkRead sends read receipts and clears the unread counter.
 func (c *Core) MarkRead(ctx context.Context, accountID, chatID, upTo string) error {
+	if err := c.allowWrite(ctx); err != nil {
+		return err
+	}
+	if err := c.allowChat(ctx, accountID, chatID); err != nil {
+		return err
+	}
 	_, ad, err := c.connected(ctx, accountID)
 	if err != nil {
 		return err
@@ -146,6 +191,12 @@ func (c *Core) MarkRead(ctx context.Context, accountID, chatID, upTo string) err
 
 // Typing sends a typing indicator.
 func (c *Core) Typing(ctx context.Context, accountID, chatID, state string) error {
+	if err := c.allowWrite(ctx); err != nil {
+		return err
+	}
+	if err := c.allowChat(ctx, accountID, chatID); err != nil {
+		return err
+	}
 	_, ad, err := c.connected(ctx, accountID)
 	if err != nil {
 		return err
@@ -244,11 +295,25 @@ func (c *Core) ListContacts(ctx context.Context, accountID, q, cursor string, li
 	if _, err := c.st.GetAccount(ctx, accountID); errors.Is(err, store.ErrNotFound) {
 		return nil, "", errNotFound("account")
 	}
-	return c.st.ListContacts(ctx, accountID, q, cursor, limit)
+	sc, err := c.scopeOf(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	var only store.Only
+	if sc != nil {
+		if !sc.accounts[accountID] {
+			return nil, "", errNotFound("account")
+		}
+		only = sc.contactIDs(accountID)
+	}
+	return c.st.ListContacts(ctx, accountID, q, cursor, limit, only)
 }
 
 // GetContact returns one contact.
 func (c *Core) GetContact(ctx context.Context, accountID, userID string) (model.Contact, error) {
+	if err := c.allowContact(ctx, accountID, userID); err != nil {
+		return model.Contact{}, err
+	}
 	ct, err := c.st.GetContact(ctx, accountID, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return model.Contact{}, errNotFound("contact")
@@ -257,22 +322,45 @@ func (c *Core) GetContact(ctx context.Context, accountID, userID string) (model.
 }
 
 // ContactChats returns the direct chats with a contact and the other chats they are a member of.
+// A scoped token gets the ones inside its scope.
 func (c *Core) ContactChats(ctx context.Context, accountID, userID string) ([]model.Chat, error) {
+	if err := c.allowContact(ctx, accountID, userID); err != nil {
+		return nil, err
+	}
 	out, err := c.st.ContactChats(ctx, accountID, userID)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, errNotFound("contact")
 	}
-	return out, err
+	if err != nil {
+		return nil, err
+	}
+	sc, err := c.scopeOf(ctx)
+	if err != nil || sc == nil {
+		return out, err
+	}
+	kept := out[:0]
+	for _, ch := range out {
+		if sc.chats[store.ChatRef{AccountID: accountID, ChatID: ch.ID}] {
+			kept = append(kept, ch)
+		}
+	}
+	return kept, nil
 }
 
 // ContactMessages pages a contact's messages; scope is "direct" (default, the conversation with
-// them) or "all" (also their messages in other chats).
+// them) or "all" (also their messages in other chats). A scoped token always gets "direct".
 func (c *Core) ContactMessages(ctx context.Context, accountID, userID, scope, cursor string, limit int) ([]model.Message, string, error) {
 	if scope == "" {
 		scope = "direct"
 	}
 	if scope != "direct" && scope != "all" {
 		return nil, "", errInvalid("scope must be direct or all")
+	}
+	if err := c.allowContact(ctx, accountID, userID); err != nil {
+		return nil, "", err
+	}
+	if Scoped(ctx) {
+		scope = "direct"
 	}
 	if cursor != "" {
 		if _, _, err := store.DecodeMessageCursor(cursor); err != nil {

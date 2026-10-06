@@ -73,8 +73,10 @@ func (a *Adapter) Info() adapter.Info {
 	}
 }
 
+// Start records the sink; accounts are added afterwards.
 func (a *Adapter) Start(_ context.Context, sink adapter.Sink) error { a.sink = sink; return nil }
 
+// Stop stops the client of every account.
 func (a *Adapter) Stop(context.Context) error {
 	a.accounts.Each(func(_ string, acc *account) { acc.stop() })
 	return nil
@@ -105,6 +107,7 @@ func (a *Adapter) AddAccount(_ context.Context, accountID string, cfg json.RawMe
 	return nil
 }
 
+// RemoveAccount logs the session out, stops the client and deletes the account's directory.
 func (a *Adapter) RemoveAccount(ctx context.Context, accountID string) error {
 	acc, ok := a.accounts.Delete(accountID)
 	if !ok {
@@ -117,6 +120,7 @@ func (a *Adapter) RemoveAccount(ctx context.Context, accountID string) error {
 	return os.RemoveAll(acc.dir)
 }
 
+// Reconnect restarts the client's run loop.
 func (a *Adapter) Reconnect(_ context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -127,6 +131,7 @@ func (a *Adapter) Reconnect(_ context.Context, accountID string) error {
 	return nil
 }
 
+// Logout ends the session on Telegram, deletes the session file and restarts the client unauthorized.
 func (a *Adapter) Logout(ctx context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -146,6 +151,7 @@ func (a *Adapter) Logout(ctx context.Context, accountID string) error {
 
 // --- login ---
 
+// LoginStart begins the phone or QR flow; the client must already be connected to Telegram.
 func (a *Adapter) LoginStart(ctx context.Context, accountID, flow string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -167,6 +173,7 @@ func (a *Adapter) LoginStart(ctx context.Context, accountID, flow string) (model
 	return model.LoginStep{}, adapter.Errorf(adapter.ErrInvalidInput, "unknown flow %q", flow)
 }
 
+// LoginSubmit advances the login with the submitted phone, code or 2FA password.
 func (a *Adapter) LoginSubmit(ctx context.Context, accountID string, fields map[string]string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -243,6 +250,7 @@ func (a *Adapter) LoginSubmit(ctx context.Context, accountID string, fields map[
 	return model.LoginStep{Flow: flowPhone, Step: model.StepDone, Self: self}, nil
 }
 
+// LoginRefresh returns the current step of the login in progress.
 func (a *Adapter) LoginRefresh(_ context.Context, accountID string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -255,6 +263,7 @@ func (a *Adapter) LoginRefresh(_ context.Context, accountID string) (model.Login
 	return lf.Step, nil
 }
 
+// LoginCancel cancels the login in progress.
 func (a *Adapter) LoginCancel(_ context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -423,7 +432,7 @@ func (acc *account) startQR(ctx context.Context) (model.LoginStep, error) {
 	loggedIn := qrlogin.OnLoginToken(acc.dispatcher)
 	first := make(chan model.LoginStep, 1)
 	delivered := false
-	go func() {
+	go func() { //nolint:gosec // G118: the QR login outlives the request that started it
 		_, err := q.Auth(qctx, loggedIn, func(_ context.Context, token qrlogin.Token) error {
 			exp := token.Expires()
 			step := acc.login.SetStep(base.Display(flowQR, "url", token.URL(), &exp))

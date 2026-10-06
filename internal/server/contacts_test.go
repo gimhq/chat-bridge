@@ -47,3 +47,34 @@ func TestContactViewEndpoints(t *testing.T) {
 		t.Fatalf("requests from other: %d %v", rec.Code, out)
 	}
 }
+
+func TestMessageListRaw(t *testing.T) {
+	e := newEnv(t)
+	e.connected("a1")
+	if err := e.fake.Push(context.Background(), "a1", adapter.Event{Kind: adapter.EvMessage,
+		Message: &model.Message{ID: "m1", ChatID: "u1@fake", Sender: model.Sender{ID: "u1@fake"}, Timestamp: time.Now().UTC(), Content: model.Content{Type: "text", Text: "hello"}},
+		Chat:    &model.Chat{ID: "u1@fake", Kind: model.ChatDirect},
+		Raw:     []byte(`{"platform":"payload"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	first := func(path string) map[string]any {
+		rec, out := e.do("GET", path, nil)
+		if rec.Code != 200 || len(out["messages"].([]any)) != 1 {
+			t.Fatalf("%s: %d %v", path, rec.Code, out)
+		}
+		return out["messages"].([]any)[0].(map[string]any)
+	}
+	if m := first("/v1/accounts/a1/chats/u1@fake/messages"); m["raw"] != nil {
+		t.Fatalf("raw must be off by default: %v", m)
+	}
+	if m := first("/v1/accounts/a1/chats/u1@fake/messages?raw=1"); m["raw"] == nil {
+		t.Fatalf("raw=1 must attach the payload: %v", m)
+	}
+}
+
+func TestReadyz(t *testing.T) {
+	e := newEnv(t)
+	if rec, out := e.doAs("", "GET", "/readyz", nil); rec.Code != 200 || out["status"] != "ok" {
+		t.Fatalf("readyz needs no token and reports ok: %d %v", rec.Code, out)
+	}
+}

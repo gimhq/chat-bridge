@@ -21,7 +21,7 @@ import (
 	"gimhq/chat-bridge/internal/store"
 )
 
-// Error is an API-facing failure (docs/chat-api-spec.md §2.1).
+// Error is an API-facing failure (docs/api.md §2.1).
 type Error struct {
 	Status  int            `json:"-"`
 	Code    string         `json:"code"`
@@ -255,6 +255,9 @@ func (c *Core) accountDir(id string) string {
 }
 
 func (c *Core) adapterFor(ctx context.Context, accountID string) (store.AccountRow, adapter.Adapter, error) {
+	if err := c.allowAccount(ctx, accountID); err != nil {
+		return store.AccountRow{}, nil, err
+	}
 	row, err := c.st.GetAccount(ctx, accountID)
 	if errors.Is(err, store.ErrNotFound) {
 		return row, nil, errNotFound("account")

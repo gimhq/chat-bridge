@@ -301,7 +301,8 @@ func (h *handlers) typing(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) listMessages(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	mq := core.MessageQuery{Cursor: q.Get("cursor"), Limit: parseLimit(r), Backfill: q.Get("backfill") == "1" || q.Get("backfill") == "true"}
+	mq := core.MessageQuery{Cursor: q.Get("cursor"), Limit: parseLimit(r), Backfill: q.Get("backfill") == "1" || q.Get("backfill") == "true",
+		Raw: q.Get("raw") == "1"}
 	var err error
 	if mq.Before, err = parseTime(q.Get("before")); err != nil {
 		writeErr(w, &core.Error{Status: http.StatusBadRequest, Code: "invalid_request", Message: "before: " + err.Error()})
@@ -397,7 +398,7 @@ func (h *handlers) react(remove bool) http.HandlerFunc {
 
 func (h *handlers) upload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, h.maxUpload)
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
+	if err := r.ParseMultipartForm(8 << 20); err != nil { //nolint:gosec // G120: the body is capped on the line above
 		writeErr(w, &core.Error{Status: http.StatusRequestEntityTooLarge, Code: "too_large", Message: "invalid multipart form or file too large"})
 		return
 	}
@@ -494,12 +495,12 @@ func (h *handlers) keysExport(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+param(r, "account")+`-keys.txt"`)
-	_, _ = w.Write(data)
+	_, _ = w.Write(data) //nolint:gosec // G705: an attachment served as application/octet-stream
 }
 
 func (h *handlers) keysImport(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
+	if err := r.ParseMultipartForm(8 << 20); err != nil { //nolint:gosec // G120: the body is capped on the line above
 		writeErr(w, &core.Error{Status: http.StatusBadRequest, Code: "invalid_request", Message: "multipart form with file and passphrase expected"})
 		return
 	}
@@ -864,4 +865,64 @@ func (h *handlers) deleteWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- tokens ---
+
+func (h *handlers) listTokens(w http.ResponseWriter, r *http.Request) {
+	ts, err := h.core.ListTokens(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"tokens": ts})
+}
+
+func (h *handlers) createToken(w http.ResponseWriter, r *http.Request) {
+	var in core.TokenInput
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	t, err := h.core.CreateToken(r.Context(), in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, t)
+}
+
+func (h *handlers) patchToken(w http.ResponseWriter, r *http.Request) {
+	var in core.TokenPatch
+	if !decodeJSON(w, r, &in) {
+		return
+	}
+	t, err := h.core.PatchToken(r.Context(), param(r, "token"), in)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
+}
+
+func (h *handlers) deleteToken(w http.ResponseWriter, r *http.Request) {
+	if err := h.core.DeleteToken(r.Context(), param(r, "token")); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// tokenSelf tells a consumer what its token may reach: {"admin": true} for the admin token, the
+// token with its scope otherwise.
+func (h *handlers) tokenSelf(w http.ResponseWriter, r *http.Request) {
+	t, scoped, err := h.core.TokenSelf(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if !scoped {
+		writeJSON(w, http.StatusOK, map[string]any{"admin": true})
+		return
+	}
+	writeJSON(w, http.StatusOK, t)
 }

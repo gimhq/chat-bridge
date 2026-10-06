@@ -53,6 +53,12 @@ func newEnv(t *testing.T) *env {
 
 func (e *env) do(method, path string, body any, headers ...string) (*httptest.ResponseRecorder, map[string]any) {
 	e.t.Helper()
+	return e.doAs(testToken, method, path, body, headers...)
+}
+
+// doAs is do with another bearer token.
+func (e *env) doAs(token, method, path string, body any, headers ...string) (*httptest.ResponseRecorder, map[string]any) {
+	e.t.Helper()
 	var rdr io.Reader
 	ct := "application/json"
 	switch b := body.(type) {
@@ -64,7 +70,7 @@ func (e *env) do(method, path string, body any, headers ...string) (*httptest.Re
 		rdr = bytes.NewReader(raw)
 	}
 	req := httptest.NewRequest(method, path, rdr)
-	req.Header.Set("Authorization", "Bearer "+testToken)
+	req.Header.Set("Authorization", "Bearer "+token)
 	if rdr != nil {
 		req.Header.Set("Content-Type", ct)
 	}
@@ -84,6 +90,23 @@ func (e *env) connected(id string) {
 	}
 	if err := e.fake.Connect(context.Background(), id); err != nil {
 		e.t.Fatal(err)
+	}
+	e.waitContacts(id)
+}
+
+// waitContacts blocks until the contact sync that follows a connect has stored the fake's
+// address book; it runs in the background, and tests that patch a contact need it finished.
+func (e *env) waitContacts(id string) {
+	e.t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := e.core.GetContact(context.Background(), id, "u1@fake"); err == nil { // the fake's one contact
+			return
+		}
+		if time.Now().After(deadline) {
+			e.t.Fatal("contacts were not synced in time")
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }
 
@@ -171,12 +194,13 @@ func TestAccountsAndLogin(t *testing.T) {
 func TestMessagesMediaAndChats(t *testing.T) {
 	e := newEnv(t)
 	ctx := context.Background()
-	_, out := e.do("POST", "/v1/accounts", map[string]any{"id": "a1", "platform": fake.Platform})
+	e.do("POST", "/v1/accounts", map[string]any{"id": "a1", "platform": fake.Platform})
 	rec, out := e.do("POST", "/v1/accounts/a1/chats/u1%40fake/messages", map[string]any{"content": map[string]any{"type": "text", "text": "hi"}})
 	if rec.Code != 409 || errCode(out) != "account_not_ready" {
 		t.Fatalf("send unpaired: %d %v", rec.Code, out)
 	}
 	_ = e.fake.Connect(ctx, "a1")
+	e.waitContacts("a1")
 
 	rec, out = e.do("POST", "/v1/accounts/a1/chats/resolve", map[string]any{"handle": "+1"})
 	if rec.Code != 200 || out["chat_id"] != "1@fake" {

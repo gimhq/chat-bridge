@@ -162,7 +162,7 @@ func resolveFile(path string) (string, error) {
 	if path == "" {
 		path = defaultFile
 	}
-	if _, err := os.Stat(path); err != nil {
+	if _, err := os.Stat(path); err != nil { //nolint:gosec // G703: the operator chooses the config path
 		if explicit || !errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("config file %s: %w", path, err)
 		}

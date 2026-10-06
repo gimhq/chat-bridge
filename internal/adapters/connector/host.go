@@ -15,6 +15,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"sync"
 	"time"
 
@@ -167,8 +168,10 @@ func dedupe(in []string) []string {
 	return out
 }
 
+// Start records the sink; accounts are added afterwards.
 func (a *Adapter) Start(_ context.Context, sink adapter.Sink) error { a.sink = sink; return nil }
 
+// Stop stops the bridge of every account.
 func (a *Adapter) Stop(context.Context) error {
 	a.accounts.Each(func(_ string, acc *account) { acc.stop() })
 	return nil
@@ -191,6 +194,7 @@ func (a *Adapter) AddAccount(ctx context.Context, accountID string, cfg json.Raw
 	return nil
 }
 
+// RemoveAccount logs the account out on the network, stops its bridge and deletes its directory.
 func (a *Adapter) RemoveAccount(ctx context.Context, accountID string) error {
 	acc, ok := a.accounts.Delete(accountID)
 	if !ok {
@@ -203,7 +207,8 @@ func (a *Adapter) RemoveAccount(ctx context.Context, accountID string) error {
 	return os.RemoveAll(acc.dir)
 }
 
-func (a *Adapter) Reconnect(ctx context.Context, accountID string) error {
+// Reconnect drops the network connection of a logged-in account and opens it again.
+func (a *Adapter) Reconnect(_ context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
 		return err
@@ -217,6 +222,7 @@ func (a *Adapter) Reconnect(ctx context.Context, accountID string) error {
 	return nil
 }
 
+// Logout cancels a login in progress and logs the stored login out on the network.
 func (a *Adapter) Logout(ctx context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -232,6 +238,7 @@ func (a *Adapter) Logout(ctx context.Context, accountID string) error {
 
 // --- login ---
 
+// LoginStart creates the connector's login process for the flow and returns its first step.
 func (a *Adapter) LoginStart(ctx context.Context, accountID, flow string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -254,6 +261,7 @@ func (a *Adapter) LoginStart(ctx context.Context, accountID, flow string) (model
 	return acc.applyStep(ctx, step)
 }
 
+// LoginSubmit passes the fields to the login process, which must be waiting for user input.
 func (a *Adapter) LoginSubmit(ctx context.Context, accountID string, fields map[string]string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -275,6 +283,7 @@ func (a *Adapter) LoginSubmit(ctx context.Context, accountID string, fields map[
 	return acc.applyStep(ctx, step)
 }
 
+// LoginRefresh returns the current step of the login in progress.
 func (a *Adapter) LoginRefresh(_ context.Context, accountID string) (model.LoginStep, error) {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -287,6 +296,7 @@ func (a *Adapter) LoginRefresh(_ context.Context, accountID string) (model.Login
 	return lf.Step, nil
 }
 
+// LoginCancel cancels the login in progress.
 func (a *Adapter) LoginCancel(_ context.Context, accountID string) error {
 	acc, err := a.accounts.Get(accountID)
 	if err != nil {
@@ -311,6 +321,7 @@ func (a *Adapter) online(accountID string) (*account, *bridgev2.UserLogin, error
 	return acc, ul, nil
 }
 
+// GetChat asks the connector for the chat's current info.
 func (a *Adapter) GetChat(ctx context.Context, accountID, chatID string) (model.Chat, error) {
 	acc, ul, err := a.online(accountID)
 	if err != nil {
@@ -332,7 +343,7 @@ func (a *Adapter) GetChat(ctx context.Context, accountID, chatID string) (model.
 		ch.Kind = kindOf(*info.Type)
 	}
 	if info.Members != nil {
-		for _, m := range info.Members.Members {
+		for _, m := range chatMembers(info.Members) {
 			if m.Membership != "" && m.Membership != event.MembershipJoin {
 				continue
 			}
@@ -351,6 +362,7 @@ func (a *Adapter) GetChat(ctx context.Context, accountID, chatID string) (model.
 	return ch, nil
 }
 
+// ListContacts returns the connector's contact list, or nothing when it has none.
 func (a *Adapter) ListContacts(ctx context.Context, accountID string) ([]model.Contact, error) {
 	_, ul, err := a.online(accountID)
 	if err != nil {
@@ -378,6 +390,8 @@ func (a *Adapter) ListContacts(ctx context.Context, accountID string) ([]model.C
 	return out, nil
 }
 
+// ResolveChat resolves a phone number or username through the connector, creating the chat if
+// needed.
 func (a *Adapter) ResolveChat(ctx context.Context, accountID, handle string) (model.ResolvedChat, error) {
 	acc, ul, err := a.online(accountID)
 	if err != nil {
@@ -438,6 +452,7 @@ func (a *Adapter) SendMessage(ctx context.Context, accountID string, req adapter
 	return msg, nil
 }
 
+// EditMessage sends an m.replace event for the connector to apply.
 func (a *Adapter) EditMessage(ctx context.Context, accountID, chatID, msgID string, c model.Content) (model.Message, error) {
 	acc, ul, err := a.online(accountID)
 	if err != nil {
@@ -459,6 +474,7 @@ func (a *Adapter) EditMessage(ctx context.Context, accountID, chatID, msgID stri
 	return model.Message{ID: msgID, ChatID: chatID, Content: c}, nil
 }
 
+// DeleteMessage sends a redaction for the connector to apply.
 func (a *Adapter) DeleteMessage(ctx context.Context, accountID, chatID, msgID, _ string) error {
 	acc, ul, err := a.online(accountID)
 	if err != nil {
@@ -475,6 +491,7 @@ func (a *Adapter) DeleteMessage(ctx context.Context, accountID, chatID, msgID, _
 	return err
 }
 
+// React sends an annotation, or redacts our earlier one when removing.
 func (a *Adapter) React(ctx context.Context, accountID, chatID, msgID, _, emoji string, remove bool) error {
 	acc, ul, err := a.online(accountID)
 	if err != nil {
@@ -499,6 +516,7 @@ func (a *Adapter) React(ctx context.Context, accountID, chatID, msgID, _, emoji 
 	return err
 }
 
+// MarkRead sends a read receipt up to the last id; connectors without receipts ignore it.
 func (a *Adapter) MarkRead(ctx context.Context, accountID, chatID string, ids []string, _ string) error {
 	acc, ul, err := a.online(accountID)
 	if err != nil {
@@ -523,6 +541,7 @@ func (a *Adapter) MarkRead(ctx context.Context, accountID, chatID string, ids []
 	return nil
 }
 
+// Typing sends a typing notification; connectors without typing ignore it.
 func (a *Adapter) Typing(ctx context.Context, accountID, chatID, state string) error {
 	acc, ul, err := a.online(accountID)
 	if err != nil {
@@ -635,7 +654,7 @@ func (acc *account) start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("bridge user: %w", err)
 	}
-	if logins := acc.user.GetCachedUserLogins(); len(logins) > 0 {
+	if logins := acc.user.GetUserLogins(); len(logins) > 0 {
 		ul := logins[0]
 		// StartLogins already connected the client and its bridge state may have been reported
 		// (bridgeStatus resolves the login by id, so Self was attached). Only fill the gap when
@@ -730,7 +749,7 @@ func (acc *account) selfContact(ul *bridgev2.UserLogin) *model.Contact {
 }
 
 // applyStep converts a bridgev2 login step and drives display_and_wait steps to completion.
-func (acc *account) applyStep(ctx context.Context, step *bridgev2.LoginStep) (model.LoginStep, error) {
+func (acc *account) applyStep(_ context.Context, step *bridgev2.LoginStep) (model.LoginStep, error) {
 	flow := acc.flowName()
 	switch step.Type {
 	case bridgev2.LoginStepTypeUserInput:
@@ -999,3 +1018,17 @@ func loadNetworkConfig(net bridgev2.NetworkConnector, defaults string, accountCf
 }
 
 var errNotImplemented = errors.New("not implemented by the virtual homeserver")
+
+// chatMembers returns the members a connector reported, in a stable order. Connectors fill
+// MemberMap; older ones still fill the list.
+func chatMembers(l *bridgev2.ChatMemberList) []bridgev2.ChatMember {
+	if l.MemberMap == nil {
+		return l.Members //nolint:staticcheck // SA1019: connectors that predate MemberMap only fill the list
+	}
+	out := make([]bridgev2.ChatMember, 0, len(l.MemberMap))
+	for _, m := range l.MemberMap {
+		out = append(out, m)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Sender < out[j].Sender })
+	return out
+}

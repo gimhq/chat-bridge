@@ -26,6 +26,16 @@ type PersonPatch struct {
 
 // ListPersons pages persons (api.md §4.7).
 func (c *Core) ListPersons(ctx context.Context, f store.PersonFilter, cursor string, limit int) ([]model.Person, string, error) {
+	sc, err := c.scopeOf(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	if sc != nil {
+		f.Only = store.Only{Set: true}
+		for id := range sc.persons {
+			f.Only.IDs = append(f.Only.IDs, id)
+		}
+	}
 	out, next, err := c.st.ListPersons(ctx, f, cursor, limit)
 	if err != nil && cursor != "" && err.Error() == "bad cursor" {
 		return nil, "", errInvalid("bad cursor")
@@ -35,6 +45,9 @@ func (c *Core) ListPersons(ctx context.Context, f store.PersonFilter, cursor str
 
 // GetPerson returns one person with links and channels.
 func (c *Core) GetPerson(ctx context.Context, id string) (model.Person, error) {
+	if err := c.allowPerson(ctx, id); err != nil {
+		return model.Person{}, err
+	}
 	p, err := c.st.GetPerson(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return model.Person{}, errNotFound("person")
@@ -199,6 +212,9 @@ func (c *Core) PersonMessages(ctx context.Context, id, scope, cursor string, lim
 	}
 	if _, err := c.GetPerson(ctx, id); err != nil {
 		return nil, "", err
+	}
+	if Scoped(ctx) { // "all" would add the person's messages in chats outside the scope
+		scope = "direct"
 	}
 	rows, next, err := c.st.PersonMessages(ctx, id, scope, cursor, limit)
 	if err != nil {

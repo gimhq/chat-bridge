@@ -252,6 +252,7 @@ type acct struct {
 	AccountID string `json:"account_id"`
 }
 
+// AddAccount forwards account.add; an empty config is sent as {}.
 func (a *Adapter) AddAccount(ctx context.Context, id string, cfg json.RawMessage, dataDir string) error {
 	if len(cfg) == 0 {
 		cfg = json.RawMessage("{}")
@@ -259,46 +260,55 @@ func (a *Adapter) AddAccount(ctx context.Context, id string, cfg json.RawMessage
 	return a.call(ctx, "account.add", map[string]any{"account_id": id, "config": cfg, "data_dir": dataDir}, nil)
 }
 
+// RemoveAccount forwards account.remove.
 func (a *Adapter) RemoveAccount(ctx context.Context, id string) error {
 	return a.call(ctx, "account.remove", acct{id}, nil)
 }
 
+// Reconnect forwards account.reconnect.
 func (a *Adapter) Reconnect(ctx context.Context, id string) error {
 	return a.call(ctx, "account.reconnect", acct{id}, nil)
 }
 
+// LoginStart forwards login.start.
 func (a *Adapter) LoginStart(ctx context.Context, id, flow string) (model.LoginStep, error) {
 	var step model.LoginStep
 	err := a.call(ctx, "login.start", map[string]any{"account_id": id, "flow": flow}, &step)
 	return step, err
 }
 
+// LoginSubmit forwards login.submit.
 func (a *Adapter) LoginSubmit(ctx context.Context, id string, fields map[string]string) (model.LoginStep, error) {
 	var step model.LoginStep
 	err := a.call(ctx, "login.submit", map[string]any{"account_id": id, "fields": fields}, &step)
 	return step, err
 }
 
+// LoginRefresh forwards login.refresh.
 func (a *Adapter) LoginRefresh(ctx context.Context, id string) (model.LoginStep, error) {
 	var step model.LoginStep
 	err := a.call(ctx, "login.refresh", acct{id}, &step)
 	return step, err
 }
 
+// LoginCancel forwards login.cancel.
 func (a *Adapter) LoginCancel(ctx context.Context, id string) error {
 	return a.call(ctx, "login.cancel", acct{id}, nil)
 }
 
+// Logout forwards logout.
 func (a *Adapter) Logout(ctx context.Context, id string) error {
 	return a.call(ctx, "logout", acct{id}, nil)
 }
 
+// GetChat forwards chat.get.
 func (a *Adapter) GetChat(ctx context.Context, id, chatID string) (model.Chat, error) {
 	var ch model.Chat
 	err := a.call(ctx, "chat.get", map[string]any{"account_id": id, "chat_id": chatID}, &ch)
 	return ch, err
 }
 
+// ListContacts forwards contact.list.
 func (a *Adapter) ListContacts(ctx context.Context, id string) ([]model.Contact, error) {
 	var out struct {
 		Contacts []model.Contact `json:"contacts"`
@@ -307,6 +317,8 @@ func (a *Adapter) ListContacts(ctx context.Context, id string) ([]model.Contact,
 	return out.Contacts, err
 }
 
+// SendMessage forwards message.send; each attachment carries a URL the adapter downloads the
+// bytes from.
 func (a *Adapter) SendMessage(ctx context.Context, id string, req adapter.SendRequest) (model.Message, error) {
 	atts := make([]wireAttachment, 0, len(req.Content.Attachments))
 	for _, att := range req.Content.Attachments {
@@ -334,36 +346,43 @@ func (a *Adapter) FetchMedia(ctx context.Context, id, mediaID string, ref json.R
 	return adapter.MediaMeta{}, adapter.ErrMediaStoredBySink
 }
 
+// ResolveChat forwards chat.resolve.
 func (a *Adapter) ResolveChat(ctx context.Context, id, handle string) (model.ResolvedChat, error) {
 	var r model.ResolvedChat
 	err := a.call(ctx, "chat.resolve", map[string]any{"account_id": id, "handle": handle}, &r)
 	return r, err
 }
 
+// EditMessage forwards message.edit.
 func (a *Adapter) EditMessage(ctx context.Context, id, chatID, msgID string, c model.Content) (model.Message, error) {
 	var m model.Message
 	err := a.call(ctx, "message.edit", map[string]any{"account_id": id, "chat_id": chatID, "message_id": msgID, "content": c}, &m)
 	return m, err
 }
 
+// DeleteMessage forwards message.delete.
 func (a *Adapter) DeleteMessage(ctx context.Context, id, chatID, msgID, senderID string) error {
 	return a.call(ctx, "message.delete", map[string]any{"account_id": id, "chat_id": chatID, "message_id": msgID, "sender_id": senderID}, nil)
 }
 
+// React forwards message.react.
 func (a *Adapter) React(ctx context.Context, id, chatID, msgID, senderID, emoji string, remove bool) error {
 	return a.call(ctx, "message.react", map[string]any{"account_id": id, "chat_id": chatID, "message_id": msgID, "sender_id": senderID, "emoji": emoji, "remove": remove}, nil)
 }
 
+// MarkRead forwards chat.mark_read.
 func (a *Adapter) MarkRead(ctx context.Context, id, chatID string, ids []string, senderID string) error {
 	return a.call(ctx, "chat.mark_read", map[string]any{"account_id": id, "chat_id": chatID, "message_ids": ids, "sender_id": senderID}, nil)
 }
 
+// KeysStatus forwards keys.status.
 func (a *Adapter) KeysStatus(ctx context.Context, id string) (model.KeyStatus, error) {
 	var st model.KeyStatus
 	err := a.call(ctx, "keys.status", acct{id}, &st)
 	return st, err
 }
 
+// KeysVerify forwards keys.verify, with the longer media timeout because a backup restore is slow.
 func (a *Adapter) KeysVerify(ctx context.Context, id, recoveryKey string) (model.KeyVerifyResult, error) {
 	var res model.KeyVerifyResult
 	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
@@ -372,6 +391,7 @@ func (a *Adapter) KeysVerify(ctx context.Context, id, recoveryKey string) (model
 	return res, err
 }
 
+// KeysExport forwards keys.export.
 func (a *Adapter) KeysExport(ctx context.Context, id, passphrase string) ([]byte, error) {
 	var out struct {
 		Data []byte `json:"data"` // base64 on the wire
@@ -380,6 +400,7 @@ func (a *Adapter) KeysExport(ctx context.Context, id, passphrase string) ([]byte
 	return out.Data, err
 }
 
+// KeysImport forwards keys.import.
 func (a *Adapter) KeysImport(ctx context.Context, id, passphrase string, data []byte) (int, error) {
 	var out struct {
 		SessionsImported int `json:"sessions_imported"`
@@ -388,24 +409,28 @@ func (a *Adapter) KeysImport(ctx context.Context, id, passphrase string, data []
 	return out.SessionsImported, err
 }
 
+// Typing forwards chat.typing.
 func (a *Adapter) Typing(ctx context.Context, id, chatID, state string) error {
 	return a.call(ctx, "chat.typing", map[string]any{"account_id": id, "chat_id": chatID, "state": state}, nil)
 }
 
 // --- Phase A optional interfaces (docs/adapter-protocol.md §4) ---
 
+// CreateChat forwards chat.create.
 func (a *Adapter) CreateChat(ctx context.Context, id string, req adapter.CreateChatRequest) (model.Chat, error) {
 	var ch model.Chat
 	err := a.call(ctx, "chat.create", map[string]any{"account_id": id, "kind": req.Kind, "name": req.Name, "members": req.Members}, &ch)
 	return ch, err
 }
 
+// UpdateChat forwards chat.update.
 func (a *Adapter) UpdateChat(ctx context.Context, id, chatID string, p adapter.ChatUpdate) (model.Chat, error) {
 	var ch model.Chat
 	err := a.call(ctx, "chat.update", map[string]any{"account_id": id, "chat_id": chatID, "name": p.Name}, &ch)
 	return ch, err
 }
 
+// Backfill forwards chat.backfill; a zero cursor is left out so the adapter starts from the newest.
 func (a *Adapter) Backfill(ctx context.Context, id, chatID string, before adapter.BackfillCursor, limit int) ([]model.Message, bool, error) {
 	params := map[string]any{"account_id": id, "chat_id": chatID, "limit": limit}
 	if before.MessageID != "" || !before.Timestamp.IsZero() {
@@ -421,6 +446,7 @@ func (a *Adapter) Backfill(ctx context.Context, id, chatID string, before adapte
 	return out.Messages, out.More, err
 }
 
+// UpdateSelf forwards self.update; a new avatar is passed as a URL to download.
 func (a *Adapter) UpdateSelf(ctx context.Context, id string, p adapter.SelfUpdate) (model.Contact, error) {
 	params := map[string]any{"account_id": id, "name": p.Name, "bio": p.Bio}
 	if p.AvatarMediaID != "" {
@@ -432,6 +458,7 @@ func (a *Adapter) UpdateSelf(ctx context.Context, id string, p adapter.SelfUpdat
 	return c, err
 }
 
+// Block forwards contact.block.
 func (a *Adapter) Block(ctx context.Context, id, userID string, blocked bool) error {
 	return a.call(ctx, "contact.block", map[string]any{"account_id": id, "user_id": userID, "blocked": blocked}, nil)
 }
