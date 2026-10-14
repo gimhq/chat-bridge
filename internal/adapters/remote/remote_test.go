@@ -540,3 +540,65 @@ func TestRemoteAdapterRequests(t *testing.T) {
 		t.Fatalf("identity event without new_id: %+v", resp)
 	}
 }
+
+func TestRemoteAdapterButtons(t *testing.T) {
+	c, srv := newEnv(t)
+	ctx := context.Background()
+	cl := dial(t, srv)
+	hello := map[string]any{"protocol": 1, "platform": "signal", "adapter": map[string]string{"name": "sig-py", "version": "0.1"},
+		"capabilities": []string{"send.text", "message.buttons"}, "login_flows": []map[string]string{{"id": "qr", "name": "QR"}}}
+	cl.send(rpcMessage{ID: json.RawMessage("1"), Method: "hello", Params: mustJSON(hello)})
+	if _, _, err := cl.conn.Read(ctx); err != nil {
+		t.Fatal(err)
+	}
+	go cl.loop()
+	eventually(t, func() bool { return len(c.Platforms()) > 0 })
+	var sent, answered []string
+	cl.handlers["account.add"] = func(json.RawMessage) (any, *rpcError) { return map[string]any{}, nil }
+	cl.handlers["contact.list"] = func(json.RawMessage) (any, *rpcError) { return map[string]any{"contacts": []model.Contact{}}, nil }
+	cl.handlers["message.send"] = func(p json.RawMessage) (any, *rpcError) {
+		sent = append(sent, string(p))
+		return model.Message{ID: "m1"}, nil
+	}
+	cl.handlers["press.answer"] = func(p json.RawMessage) (any, *rpcError) {
+		answered = append(answered, string(p))
+		return map[string]any{}, nil
+	}
+	if _, err := c.CreateAccount(ctx, "sig1", "signal", "", nil); err != nil {
+		t.Fatal(err)
+	}
+	cl.expect("account.add")
+	cl.send(rpcMessage{ID: json.RawMessage("2"), Method: "status", Params: mustJSON(map[string]any{"account_id": "sig1", "status": "connected",
+		"self": model.Contact{ID: "+10000", Handle: "+10000"}})})
+	eventually(t, func() bool { a, _ := c.GetAccount(ctx, "sig1"); return a.Status == model.StatusConnected })
+
+	kb := [][]model.Button{{{Text: "A", Data: "d:0"}}}
+	if _, _, err := c.Send(ctx, "sig1", "+2", model.SendRequest{Content: model.Content{Type: model.ContentText, Text: "Pick", Buttons: kb}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 1 || !strings.Contains(sent[0], `"buttons":[[{"text":"A","data":"d:0"}]]`) {
+		t.Fatalf("message.send params: %v", sent)
+	}
+
+	cl.send(rpcMessage{ID: json.RawMessage("3"), Method: "events", Params: mustJSON(map[string]any{"account_id": "sig1", "events": []map[string]any{{
+		"kind": "button", "chat_id": "+2", "message_id": "m1", "user_id": "+2", "sender": model.Contact{ID: "+2", Names: model.Names{Profile: "Bob"}},
+		"data": "d:0", "press_id": "q1", "ts": "2026-10-14T05:00:00Z"}}})})
+	var press model.ButtonPress
+	eventually(t, func() bool {
+		evs, _, _ := c.ListEvents(ctx, "", store.EventFilter{Types: []string{model.EvMessageButton}}, 10)
+		return len(evs) == 1 && json.Unmarshal(evs[0].Data, &press) == nil
+	})
+	if press.PressID != "q1" || press.Data != "d:0" || press.Sender.Name != "Bob" || press.MessageID != "m1" || !press.PressedAt.Equal(time.Date(2026, 10, 14, 5, 0, 0, 0, time.UTC)) {
+		t.Fatalf("press: %+v", press)
+	}
+	if err := c.AnswerPress(ctx, "sig1", "q1", model.PressAnswer{Text: "ok", Alert: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(answered) != 1 || answered[0] != `{"account_id":"sig1","alert":true,"press_id":"q1","text":"ok"}` {
+		t.Fatalf("press.answer params: %v", answered)
+	}
+	resp := cl.call("events", map[string]any{"account_id": "sig1", "events": []map[string]any{{"kind": "button", "chat_id": "+2"}}})
+	if resp.Error == nil || resp.Error.Code != codeInvalidParams {
+		t.Fatalf("button event without press_id: %+v", resp)
+	}
+}

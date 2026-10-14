@@ -133,6 +133,7 @@ func New(opts Options) http.Handler {
 			r.Delete("/messages/{msg}/reactions/{emoji}", h.react(true))
 
 			r.Post("/media", h.upload)
+			r.Post("/presses/{press}/answer", h.answerPress)
 
 			r.Get("/keys", adminOnly(h.keysStatus))
 			r.Post("/keys/verify", adminOnly(h.keysVerify))

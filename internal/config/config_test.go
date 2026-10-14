@@ -33,7 +33,7 @@ func TestLoadEnvOnly(t *testing.T) {
 			check: func(c Config) bool {
 				return c.Server.Addr == ":8080" && filepath.IsAbs(c.Storage.DataDir) && strings.HasSuffix(c.Storage.DataDir, "data") &&
 					c.Log.Level == "info" && c.Media.MaxUploadMB == 64 && len(c.Media.AutoDownload) == 3 &&
-					c.Media.AutoDownloadMaxMB == 16 && c.Events.RetentionDays == 7 && c.Source == ""
+					c.Media.AutoDownloadMaxMB == 16 && c.Events.RetentionDays == 7 && c.Events.PressTimeoutS == 10 && c.Source == ""
 			},
 		},
 		{
@@ -41,12 +41,14 @@ func TestLoadEnvOnly(t *testing.T) {
 			env: map[string]string{
 				"CHATBRIDGE_SERVER_TOKEN": "0123456789abcdef", "CHATBRIDGE_SERVER_ADDR": ":9000", "CHATBRIDGE_LOG_LEVEL": "debug",
 				"CHATBRIDGE_MEDIA_MAX_UPLOAD_MB": "8", "CHATBRIDGE_MEDIA_AUTO_DOWNLOAD": " image , file", "CHATBRIDGE_STORAGE_DATA_DIR": "/var/lib/cb",
+				"CHATBRIDGE_EVENTS_PRESS_TIMEOUT_S": "3",
 			},
 			check: func(c Config) bool {
 				return c.Server.Addr == ":9000" && c.Log.Level == "debug" && c.Media.MaxUploadMB == 8 &&
-					len(c.Media.AutoDownload) == 2 && c.Media.AutoDownload[1] == "file" && c.Storage.DataDir == "/var/lib/cb"
+					len(c.Media.AutoDownload) == 2 && c.Media.AutoDownload[1] == "file" && c.Storage.DataDir == "/var/lib/cb" && c.Events.PressTimeoutS == 3
 			},
 		},
+		{name: "bad press timeout", env: map[string]string{"CHATBRIDGE_SERVER_TOKEN": "0123456789abcdef", "CHATBRIDGE_EVENTS_PRESS_TIMEOUT_S": "0"}, wantErr: "invalid config"},
 		{name: "missing token", env: map[string]string{}, wantErr: "server.token"},
 		{name: "short token", env: map[string]string{"CHATBRIDGE_SERVER_TOKEN": "short"}, wantErr: "server.token"},
 		{name: "bad log level", env: map[string]string{"CHATBRIDGE_SERVER_TOKEN": "0123456789abcdef", "CHATBRIDGE_LOG_LEVEL": "loud"}, wantErr: "invalid config"},

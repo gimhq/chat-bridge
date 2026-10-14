@@ -74,6 +74,7 @@ maps to `CHATBRIDGE_<SECTION>_<KEY>`; list values are comma separated in the env
 | `media.auto_download_max_mb` | `CHATBRIDGE_MEDIA_AUTO_DOWNLOAD_MAX_MB` | `16` | larger attachments stay `remote` |
 | `media.max_upload_mb` | `CHATBRIDGE_MEDIA_MAX_UPLOAD_MB` | `64` | cap for `POST /accounts/{a}/media` |
 | `events.retention_days` | `CHATBRIDGE_EVENTS_RETENTION_DAYS` | `7` | event log retention |
+| `events.press_timeout_s` | `CHATBRIDGE_EVENTS_PRESS_TIMEOUT_S` | `10` | seconds a button press waits for an answer before the bridge answers it with no text (1–60, §4.13) |
 | `log.level` | `CHATBRIDGE_LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `persons.auto_link_by_phone` | `CHATBRIDGE_PERSONS_AUTO_LINK_BY_PHONE` | `true` | join contacts on different accounts that share a phone into one Person (§3.8) |
 | `adapters.telegram.api_id` | `CHATBRIDGE_ADAPTERS_TELEGRAM_API_ID` | — | Telegram application id (my.telegram.org), set once for the server and inherited by every Telegram account |
@@ -153,6 +154,9 @@ adapter-specific read-only detail about the session (schema published under `GET
 ### 3.2 Capabilities
 
 Strings an account advertises. A request that needs an absent capability fails with `422 unsupported`.
+`Account.capabilities` is per account: two accounts on one platform can differ (a Telegram bot
+account can do less than a user account, but has `message.buttons`). `GET /platforms` lists what
+the platform offers across all its account kinds.
 
 | Capability | Meaning |
 |---|---|
@@ -165,6 +169,7 @@ Strings an account advertises. A request that needs an absent capability fails w
 | `message.edit` | `PATCH` a sent message |
 | `message.delete` | unsend for everyone |
 | `message.reaction` | add or remove an emoji reaction |
+| `message.buttons` | inline buttons on sent messages (§3.5) and button presses (`message.button`, §4.13) |
 | `message.history` | adapter can backfill history from the platform, not only from the local store |
 | `chat.read` | mark-as-read reaches the platform |
 | `chat.typing` | typing indicator out |
@@ -277,6 +282,23 @@ and `[label](url)`. Nothing else is guaranteed.
 | `deleted` | | body redacted by sender |
 | `expired` | | disappearing / view-once message whose body is gone |
 | `unsupported` | `unsupported: {platform_type}` | adapter could not map it; `raw` has the payload |
+
+Buttons: `text`, `image`, `video`, `audio` and `file` content may carry `buttons`, rows of inline
+buttons shown under the message:
+
+```json
+"buttons": [
+  [{"text": "A", "data": "d:ev1:0"}, {"text": "B", "data": "d:ev1:1"}],
+  [{"text": "Docs", "url": "https://example.org/docs"}]
+]
+```
+
+A button has `text` and exactly one of `data` (opaque to the bridge, at most 64 bytes, delivered
+back in a `message.button` event when pressed, §4.13) or `url` (`http`, `https` or `tg`; opened by
+the client, no event). Rows are not empty; limits beyond that (buttons per row, rows) are the
+platform's and come back as `400 invalid_request`. Sending buttons needs `message.buttons`.
+Inbound messages that carry a keyboard (another bot's) show it here read-only, `data` included;
+pressing them on behalf of the account is not supported.
 
 `system.kind`: `created`, `member_joined`, `member_left`, `member_added`, `member_removed`,
 `role_changed`, `name_changed`, `avatar_changed`, `description_changed`, `pinned`, `unpinned`,
@@ -461,7 +483,7 @@ formats: `{"handle": "+8613800000000"}` → `{"chat_id": "8613800000000@s.whatsa
 | GET | `/accounts/{a}/chats/{chat}/messages` | `cursor, limit, before?, after?, backfill=1?, raw=1?` | `{messages: [Message], next_cursor}` newest first |
 | POST | `/accounts/{a}/chats/{chat}/messages` | SendRequest | 201 Message (`status: pending` or `sent`) |
 | GET | `/accounts/{a}/messages/{msg}` | `raw=1?` | Message |
-| PATCH | `/accounts/{a}/messages/{msg}` | `{content: {type: "text", text}}` | Message; needs `message.edit` |
+| PATCH | `/accounts/{a}/messages/{msg}` | `{content?: {type: "text", text, format?}, buttons?}` | Message; `content` needs `message.edit`, `buttons` needs `message.buttons` |
 | DELETE | `/accounts/{a}/messages/{msg}` | | Message with `deleted_at`; needs `message.delete` |
 | PUT | `/accounts/{a}/messages/{msg}/reactions/{emoji}` | | 204; needs `message.reaction` |
 | DELETE | `/accounts/{a}/messages/{msg}/reactions/{emoji}` | | 204 |
@@ -474,6 +496,11 @@ returned while the platform reports more, even when the local store is exhausted
 `message.history`, otherwise silently ignored. `search` matches every whitespace-separated term
 against message text (substring, case-insensitive); results are newest first.
 
+`PATCH` takes `content`, `buttons` or both, and only on the account's own messages. `buttons`
+replaces the keyboard with a new layout, `[]` removes it, and leaving it out keeps the current
+one, also when the text changes. A buttons-only change works on media messages too (caption
+untouched) and does not set `edited_at`. Both emit `message.updated`.
+
 SendRequest:
 
 ```json
@@ -483,7 +510,8 @@ SendRequest:
     "type": "image",
     "text": "caption",
     "format": "markdown",
-    "attachments": [{"media_id": "upl_9f8e…"}]
+    "attachments": [{"media_id": "upl_9f8e…"}],
+    "buttons": [[{"text": "Open", "url": "https://example.org"}]]
   },
   "reply_to": "3EB0C767D26A1D8E5C79",
   "thread_id": null,
@@ -648,8 +676,9 @@ The scope is an allowlist, resolved on every request:
 - allowed chats = the direct chats with the allowed contacts plus `chats`. A group is reachable
   only when it is listed in `chats`; an allowed contact's messages in other groups are not.
 
-`read_only: true` takes away everything that acts on the platform: sending, editing, deleting,
-reacting, typing, read receipts (`…/read`), uploads and `chats/resolve` answer `403 forbidden`.
+`read_only: true` takes away everything that acts on the platform: sending, editing (text or
+buttons), deleting, reacting, typing, read receipts (`…/read`), uploads, `chats/resolve` and
+answering button presses answer `403 forbidden`.
 Reading, searching, events, `backfill=1` and `POST /media/{id}/fetch` stay available.
 
 `persons` must exist and every `account_id` must name an account when the scope is stored;
@@ -663,6 +692,7 @@ What a scoped token can do:
 | `GET …/chats`, `GET …/chats/{chat}`, `POST …/chats/{chat}/read`, `…/typing`, `GET` and `POST …/chats/{chat}/messages` | allowed chats only; others answer `404` |
 | `POST …/chats/resolve` | starts a conversation with an allowed contact: `handle` must be the contact's user id, or the `handle` or `phone` the bridge holds for it, and the platform must answer with that contact; anything else is `404`, without a platform lookup when the handle names no allowed contact. The direct chat it returns is stored and becomes an allowed chat |
 | `GET`, `PATCH`, `DELETE …/messages/{msg}`, `PUT`, `DELETE …/reactions/{emoji}` | the message must be in an allowed chat; else `404` |
+| `POST …/presses/{press}/answer` | the press must be in an allowed chat; else `404` |
 | `GET …/messages/search` | results from allowed chats only |
 | `GET …/contacts`, `…/contacts/{user}`, `…/contacts/{user}/chats`, `…/contacts/{user}/messages` | allowed contacts only; the views stay inside the allowed chats and `scope=all` is treated as `direct` |
 | `GET /persons`, `/persons/{p}`, `/persons/{p}/chats`, `/persons/{p}/messages` | the listed persons only; `scope=all` is treated as `direct` |
@@ -692,6 +722,28 @@ bridge without any call here; these endpoints establish trust and durability of 
 An event that cannot be decrypted is stored as `content.type: unsupported` with
 `platform_type: m.room.encrypted` plus a `platform.event` (`decrypt_failed`) carrying the reason;
 once the key arrives (backup restore, key request answered) new events decrypt normally.
+
+### 4.13 Button presses
+
+A press on a `data` button (§3.5) arrives as a `message.button` event (§6) and waits for one
+answer, which stops the progress indicator in the user's client and can show them a short text.
+
+| Method | Path | Body | Result |
+|---|---|---|---|
+| POST | `/accounts/{a}/presses/{press}/answer` | `{text?, alert?}` | 204; `text` is shown as a toast, or as a dialog with `alert: true`; needs `message.buttons` |
+
+- One answer per press: a second one answers `409 press_answered`.
+- If no consumer answers within `events.press_timeout_s` (default 10 s), the bridge answers with
+  no text so the client stops waiting; a later answer gets `409 press_expired`. A press is never
+  left unanswered.
+- An unknown press is `404`. Presses are held in memory, so a press from before a bridge restart
+  is unknown too.
+- Several consumers may read the same chat, each with its own event cursor, and all of them see
+  every press. The consumer that sent the message owns its presses: it answers them and edits the
+  keyboard; every other consumer ignores presses on messages it did not send.
+
+A press on a message the bridge does not know (sent before the account was added) still produces
+the event, with the ids as the platform reports them. Presses are not stored as messages.
 
 ## 5. Login flows
 
@@ -730,7 +782,7 @@ Known flows per platform:
 | Platform | Flows |
 |---|---|
 | whatsapp | `qr`, `phone` (pairing code) |
-| telegram | `phone` (OTP, optional 2FA password), `qr` |
+| telegram | `phone` (OTP, optional 2FA password), `qr`, `bot` (token from @BotFather) |
 | matrix | `password` (user + password), `token` (paste an access token) |
 | wechat | `qr` |
 | signal | `qr` (link device) |
@@ -764,6 +816,7 @@ handled and resume with `?cursor=`. The bridge keeps at least 7 days of events.
 | `message.deleted` | `{chat_id, message_id, deleted_at}` |
 | `message.reaction` | `{chat_id, message_id, sender_id, emoji, removed: bool}` |
 | `message.receipt` | `{chat_id, message_ids[], user_id, kind: "delivered" \| "read"}` |
+| `message.button` | `{chat_id, message_id, user_id, sender: {id, name}, data, press_id, pressed_at}`: a press on a `data` button; answer it with §4.13. Not stored as a message |
 | `chat.new` | Chat |
 | `chat.updated` | Chat (name, avatar, membership, mute/archive). `merged_from` is set when the platform re-addressed a direct chat (WhatsApp phone number → LID): the chat and messages stored under that old id now live under this one, and the old id answers `404` |
 | `chat.typing` | `{chat_id, user_id, state}` |
@@ -829,6 +882,14 @@ envelope. A `: keepalive` comment every 15 s.
 | chat invite | added directly, or invite link | invite link / added | `m.room.member invite` | added directly, or group link | invited, must confirm for >N members |
 | incoming call | event; reject only | event; reject only | `m.call.*`; reject only | not bridged | event; reject only |
 | payment content | none | invoice / Stars | none | none (payments not bridged) | 转账 / 红包 |
+| inline buttons | no | bot accounts only (`message.buttons`) | no | no | no |
+
+Telegram bot accounts (login flow `bot`) differ from user accounts: no dialog list, address
+book, history backfill, read receipts, presence, member lists, chat creation or profile changes,
+and `chats/resolve` takes `@username` only. A bot cannot open a direct chat; the user has to start
+it first. The bot knows a chat once a message from it arrives or it sends to it. In groups with
+privacy mode on (the default) a bot receives only commands, replies to its own messages and
+button presses.
 
 WeChat has no supported client protocol; any adapter there is best-effort and must advertise a
 narrow capability list.

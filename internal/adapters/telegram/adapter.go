@@ -56,15 +56,11 @@ func New(log *slog.Logger, d Defaults) *Adapter { return &Adapter{log: log, defa
 func (a *Adapter) Info() adapter.Info {
 	return adapter.Info{
 		Platform: platform, Name: "Telegram (gotd)", Version: "0.1.0",
-		Capabilities: []string{
-			adapter.CapSendText, adapter.CapSendMedia, adapter.CapSendLocation, adapter.CapSendContact, adapter.CapReply,
-			adapter.CapEdit, adapter.CapDelete, adapter.CapReaction, adapter.CapChatRead, adapter.CapChatTyping,
-			adapter.CapChatResolve, adapter.CapChatMembers, adapter.CapPresence, adapter.CapReceipts, adapter.CapMarkdown,
-			adapter.CapChatCreate, adapter.CapHistory, adapter.CapSelfUpdate,
-		},
+		Capabilities: infoCaps(),
 		LoginFlows: []model.LoginFlow{
 			{ID: flowPhone, Name: "Phone number + code"},
 			{ID: flowQR, Name: "Scan QR from Telegram app"},
+			{ID: flowBot, Name: "Bot token from @BotFather"},
 		},
 		ConfigSchema: json.RawMessage(`{"type":"object","properties":{
 			"api_id":{"type":"integer","description":"overrides adapters.telegram.api_id"},
@@ -145,6 +141,7 @@ func (a *Adapter) Logout(ctx context.Context, accountID string) error {
 	}
 	acc.stop()
 	_ = os.Remove(acc.sessionPath())
+	acc.markBot(false)
 	acc.start()
 	return nil
 }
@@ -169,6 +166,9 @@ func (a *Adapter) LoginStart(ctx context.Context, accountID, flow string) (model
 		return acc.login.SetStep(base.Input(flow, model.LoginField{Name: "phone", Type: "phone", Label: "Phone number with country code", Pattern: `^\+?[0-9]{8,15}$`})), nil
 	case flowQR:
 		return acc.startQR(ctx)
+	case flowBot:
+		acc.login.Start(flow, nil)
+		return acc.login.SetStep(base.Input(flow, model.LoginField{Name: "token", Type: "password", Label: "Bot token from @BotFather", Pattern: `^[0-9]+:[A-Za-z0-9_-]+$`})), nil
 	}
 	return model.LoginStep{}, adapter.Errorf(adapter.ErrInvalidInput, "unknown flow %q", flow)
 }
@@ -188,6 +188,13 @@ func (a *Adapter) LoginSubmit(ctx context.Context, accountID string, fields map[
 		return model.LoginStep{}, adapter.Errorf(adapter.ErrNotConnected, "not connected")
 	}
 	au := cli.Auth()
+	if lf.Name == flowBot {
+		token := strings.TrimSpace(fields["token"])
+		if token == "" {
+			return model.LoginStep{}, adapter.Errorf(adapter.ErrInvalidInput, "token is required")
+		}
+		return acc.loginBot(ctx, token), nil
+	}
 	if lf.Name == flowQR {
 		if lf.Data["need_password"] == "" {
 			return lf.Step, nil
@@ -406,16 +413,19 @@ func (acc *account) online(ctx context.Context) (*model.Contact, error) {
 	if err := pm.Init(ctx); err != nil {
 		acc.rep.Log.Warn("peers init", "err", err)
 	}
+	acc.markBot(self.Bot)
 	contact := userContact(self)
 	contact.IsSelf, contact.IsContact = true, true
 	if already {
 		return contact, nil
 	}
 	go func() {
-		if err := gaps.Run(runCtx, cli.API(), self.ID, updates.AuthOptions{OnStart: func(ctx context.Context) {
+		if err := gaps.Run(runCtx, cli.API(), self.ID, updates.AuthOptions{IsBot: self.Bot, OnStart: func(ctx context.Context) {
 			acc.rep.Status(adapter.Status{Status: model.StatusConnected, Self: contact,
-				Device: rawJSON(map[string]any{"user_id": self.ID, "device_name": acc.cfg.DeviceName})})
-			acc.loadDialogs(ctx)
+				Device: rawJSON(map[string]any{"user_id": self.ID, "device_name": acc.cfg.DeviceName, "bot": self.Bot})})
+			if !self.Bot { // bots may not list dialogs
+				acc.loadDialogs(ctx)
+			}
 		}}); err != nil && runCtx.Err() == nil {
 			acc.rep.Log.Warn("updates manager stopped", "err", err)
 		}

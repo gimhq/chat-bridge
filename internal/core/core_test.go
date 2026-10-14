@@ -320,11 +320,11 @@ func TestReactionsReceiptsEditDelete(t *testing.T) {
 		t.Fatalf("missing chat: %v", err)
 	}
 
-	edited, err := c.Edit(ctx, "a1", sent.ID, model.Content{Type: "text", Text: "yo2"})
+	edited, err := c.Edit(ctx, "a1", sent.ID, model.EditRequest{Content: &model.Content{Type: "text", Text: "yo2"}})
 	if err != nil || edited.Content.Text != "yo2" {
 		t.Fatalf("edit own: %+v %v", edited, err)
 	}
-	if _, err := c.Edit(ctx, "a1", "m1", model.Content{Type: "text", Text: "x"}); AsError(err).Status != http.StatusBadRequest {
+	if _, err := c.Edit(ctx, "a1", "m1", model.EditRequest{Content: &model.Content{Type: "text", Text: "x"}}); AsError(err).Status != http.StatusBadRequest {
 		t.Fatalf("edit foreign: %v", err)
 	}
 	if err := c.React(ctx, "a1", "m1", "❤️", false); err != nil || len(f.Reacted) != 1 {

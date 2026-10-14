@@ -21,6 +21,7 @@ media:
 
 events:
   retention_days: 7                   # event log retention (typing/presence 1h, platform.event 24h are fixed)
+  press_timeout_s: 10                 # a button press nobody answers is answered with no text after this
 
 log:
   level: info                         # debug | info | warn | error

@@ -269,6 +269,7 @@ var scopedRoutes = map[string]bool{
 	"PUT /v1/accounts/{account}/messages/{msg}/reactions/{emoji}":    true,
 	"DELETE /v1/accounts/{account}/messages/{msg}/reactions/{emoji}": true,
 	"POST /v1/accounts/{account}/media":                              true,
+	"POST /v1/accounts/{account}/presses/{press}/answer":             true,
 	"GET /v1/accounts/{account}/contacts":                            true,
 	"GET /v1/accounts/{account}/contacts/{user}":                     true,
 	"GET /v1/accounts/{account}/contacts/{user}/chats":               true,
@@ -340,6 +341,8 @@ func TestReadOnlyToken(t *testing.T) {
 		{"POST", "/v1/accounts/a1/chats/u1@fake/typing", map[string]any{"state": "typing"}},
 		{"POST", "/v1/accounts/a1/chats/u1@fake/read", nil},
 		{"POST", "/v1/accounts/a1/chats/resolve", map[string]any{"handle": "u1@fake"}},
+		{"PATCH", "/v1/accounts/a1/messages/m1", map[string]any{"buttons": []any{}}},
+		{"POST", "/v1/accounts/a1/presses/p1/answer", map[string]any{"text": "ok"}},
 	} {
 		if rec, out := e.doAs(tok, c.method, c.path, c.body); rec.Code != 403 || errCode(out) != "forbidden" {
 			t.Errorf("%s %s: got %d %v, want 403 forbidden", c.method, c.path, rec.Code, out)

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -112,6 +113,8 @@ type Options struct {
 	EventRetention time.Duration
 	// AutoLinkByPhone joins contacts that share a phone across accounts into one person.
 	AutoLinkByPhone bool
+	// PressTimeout is how long a button press waits for a consumer's answer; zero means 10s.
+	PressTimeout time.Duration
 }
 
 // Core is the service layer behind the HTTP API.
@@ -127,6 +130,8 @@ type Core struct {
 	adapters      map[string]adapter.Adapter
 	bus           *bus
 	httpc         *http.Client
+	pressTimeout  time.Duration
+	presses       presses
 
 	mu     sync.Mutex
 	logins map[string]*loginState
@@ -139,11 +144,15 @@ func New(opts Options) *Core {
 	if opts.EventRetention == 0 {
 		opts.EventRetention = 7 * 24 * time.Hour
 	}
+	if opts.PressTimeout == 0 {
+		opts.PressTimeout = 10 * time.Second
+	}
 	return &Core{
 		st: opts.Store, blobs: opts.Blobs, dataDir: opts.DataDir, log: opts.Logger, policy: opts.Media, retain: opts.EventRetention,
 		autoLinkPhone: opts.AutoLinkByPhone,
 		adapters:      map[string]adapter.Adapter{}, bus: newBus(), httpc: &http.Client{Timeout: 10 * time.Second},
 		logins: map[string]*loginState{}, stopCh: make(chan struct{}),
+		pressTimeout: opts.PressTimeout, presses: presses{m: map[pressKey]*press{}},
 	}
 }
 
@@ -284,8 +293,22 @@ func (c *Core) connected(ctx context.Context, accountID string) (store.AccountRo
 	return row, a, nil
 }
 
-func requireCap(a adapter.Adapter, capability string) error {
-	if !a.Info().Has(capability) {
+// capsOf returns what one account can do: the adapter's per-account set when it declares one.
+func capsOf(a adapter.Adapter, accountID string) []string {
+	if ac, ok := a.(adapter.AccountCapabilities); ok {
+		if caps := ac.AccountCapabilities(accountID); caps != nil {
+			return caps
+		}
+	}
+	return a.Info().Capabilities
+}
+
+func can(a adapter.Adapter, accountID, capability string) bool {
+	return slices.Contains(capsOf(a, accountID), capability)
+}
+
+func requireCap(a adapter.Adapter, accountID, capability string) error {
+	if !can(a, accountID, capability) {
 		return errUnsupported(capability)
 	}
 	return nil

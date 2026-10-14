@@ -243,6 +243,8 @@ func (c *Core) ingest(ctx context.Context, tx *store.Store, accountID string, ev
 			return nil, err
 		}
 		return nil, c.autoLink(ctx, tx, accountID, ev.Contact.ID)
+	case adapter.EvButton:
+		return nil, c.ingestPress(ctx, tx, accountID, ev)
 	case adapter.EvIdentity:
 		return nil, c.reID(ctx, tx, accountID, ev.UserID, ev.NewID)
 	case adapter.EvTyping:

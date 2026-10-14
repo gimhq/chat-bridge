@@ -209,6 +209,15 @@ type Content struct {
 	Call        *Call         `json:"call,omitempty"`
 	System      *System       `json:"system,omitempty"`
 	Unsupported *Unsupported  `json:"unsupported,omitempty"`
+	// Buttons are inline buttons under the message, in rows.
+	Buttons [][]Button `json:"buttons,omitempty"`
+}
+
+// Button is one inline button: Data is delivered back on press, URL is opened by the client.
+type Button struct {
+	Text string `json:"text"`
+	Data string `json:"data,omitempty"`
+	URL  string `json:"url,omitempty"`
 }
 
 // Attachment states.
@@ -285,6 +294,30 @@ type System struct {
 // Unsupported content names the platform type the adapter could not map.
 type Unsupported struct {
 	PlatformType string `json:"platform_type"`
+}
+
+// EditRequest is the body of PATCH /accounts/{a}/messages/{msg}. Nil leaves a part unchanged;
+// an empty Buttons removes the keyboard.
+type EditRequest struct {
+	Content *Content    `json:"content,omitempty"`
+	Buttons *[][]Button `json:"buttons,omitempty"`
+}
+
+// ButtonPress is the data of a message.button event.
+type ButtonPress struct {
+	ChatID    string    `json:"chat_id"`
+	MessageID string    `json:"message_id"`
+	UserID    string    `json:"user_id"`
+	Sender    Sender    `json:"sender"`
+	Data      string    `json:"data"`
+	PressID   string    `json:"press_id"`
+	PressedAt time.Time `json:"pressed_at"`
+}
+
+// PressAnswer is the body of POST /accounts/{a}/presses/{press}/answer.
+type PressAnswer struct {
+	Text  string `json:"text,omitempty"`
+	Alert bool   `json:"alert,omitempty"`
 }
 
 // SendRequest is the body of POST /chats/{chat}/messages.
@@ -366,6 +399,7 @@ const (
 	EvMessageDeleted  = "message.deleted"
 	EvMessageReaction = "message.reaction"
 	EvMessageReceipt  = "message.receipt"
+	EvMessageButton   = "message.button"
 	EvChatNew         = "chat.new"
 	EvChatUpdated     = "chat.updated"
 	EvChatTyping      = "chat.typing"

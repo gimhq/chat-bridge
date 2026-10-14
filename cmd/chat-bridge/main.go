@@ -74,6 +74,7 @@ func run() error {
 		Store: st, Blobs: blobs, DataDir: cfg.Storage.DataDir, Logger: log,
 		Media:           core.MediaPolicy{AutoDownload: cfg.Media.AutoDownload, MaxBytes: cfg.Media.AutoDownloadMaxMB << 20},
 		EventRetention:  time.Duration(cfg.Events.RetentionDays) * 24 * time.Hour,
+		PressTimeout:    time.Duration(cfg.Events.PressTimeoutS) * time.Second,
 		AutoLinkByPhone: cfg.Persons.AutoLinkByPhone,
 	})
 	c.Register(whatsapp.New(log.With("adapter", "whatsapp")))

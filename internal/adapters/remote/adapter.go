@@ -414,6 +414,11 @@ func (a *Adapter) Typing(ctx context.Context, id, chatID, state string) error {
 	return a.call(ctx, "chat.typing", map[string]any{"account_id": id, "chat_id": chatID, "state": state}, nil)
 }
 
+// AnswerPress forwards press.answer.
+func (a *Adapter) AnswerPress(ctx context.Context, id, pressID, text string, alert bool) error {
+	return a.call(ctx, "press.answer", map[string]any{"account_id": id, "press_id": pressID, "text": text, "alert": alert}, nil)
+}
+
 // --- Phase A optional interfaces (docs/adapter-protocol.md §4) ---
 
 // CreateChat forwards chat.create.

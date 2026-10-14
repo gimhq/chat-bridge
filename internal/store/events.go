@@ -69,7 +69,7 @@ type EventScope struct {
 // Event types by the payload key that names their chat or contact (api.md §6). A type that is not
 // listed here never reaches a scoped token.
 var (
-	scopeByChatID = []string{model.EvMessageNew, model.EvMessageUpdated, model.EvMessageDeleted, model.EvMessageReaction, model.EvMessageReceipt, model.EvChatTyping}
+	scopeByChatID = []string{model.EvMessageNew, model.EvMessageUpdated, model.EvMessageDeleted, model.EvMessageReaction, model.EvMessageReceipt, model.EvChatTyping, model.EvMessageButton}
 	scopeByChat   = []string{model.EvChatNew, model.EvChatUpdated}
 )
 

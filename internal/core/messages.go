@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -73,7 +74,7 @@ func (c *Core) backfill(ctx context.Context, accountID, chatID string, q Message
 		return false, false, err
 	}
 	bf, ok := ad.(adapter.Backfiller)
-	if !ok || !ad.Info().Has(adapter.CapHistory) {
+	if !ok || !can(ad, accountID, adapter.CapHistory) {
 		return false, false, nil // api.md §4.4: ignored when the platform has no history
 	}
 	var before adapter.BackfillCursor
@@ -191,16 +192,27 @@ func (c *Core) Send(ctx context.Context, accountID, chatID string, req model.Sen
 	if !ok {
 		return model.Message{}, false, errInvalid("content type %q is not sendable", req.Content.Type)
 	}
-	if err := requireCap(ad, capNeeded); err != nil {
+	if err := requireCap(ad, accountID, capNeeded); err != nil {
 		return model.Message{}, false, err
 	}
 	if req.ReplyTo != "" {
-		if err := requireCap(ad, adapter.CapReply); err != nil {
+		if err := requireCap(ad, accountID, adapter.CapReply); err != nil {
 			return model.Message{}, false, err
 		}
 	}
 	if req.ThreadID != "" {
-		if err := requireCap(ad, adapter.CapThread); err != nil {
+		if err := requireCap(ad, accountID, adapter.CapThread); err != nil {
+			return model.Message{}, false, err
+		}
+	}
+	if req.Content.Buttons != nil {
+		if !captioned[req.Content.Type] {
+			return model.Message{}, false, errInvalid("buttons are not allowed on %s", req.Content.Type)
+		}
+		if err := checkButtons(req.Content.Buttons); err != nil {
+			return model.Message{}, false, err
+		}
+		if err := requireCap(ad, accountID, adapter.CapButtons); err != nil {
 			return model.Message{}, false, err
 		}
 	}
@@ -328,18 +340,68 @@ func (m *mediaSource) Open(ctx context.Context, mediaID string) (io.ReadCloser, 
 	return f, md.Attachment(), nil
 }
 
-// Edit changes a sent message's text.
-func (c *Core) Edit(ctx context.Context, accountID, id string, content model.Content) (model.Message, error) {
+// captioned lists the content types that take buttons: text and media with a caption.
+var captioned = map[string]bool{
+	model.ContentText: true, model.ContentImage: true, model.ContentVideo: true, model.ContentAudio: true, model.ContentFile: true,
+}
+
+// checkButtons validates an inline keyboard: non-empty rows, and buttons with a text and exactly
+// one of data (at most 64 bytes) or an http, https or tg URL.
+func checkButtons(rows [][]model.Button) error {
+	for _, row := range rows {
+		if len(row) == 0 {
+			return errInvalid("button rows must not be empty")
+		}
+		for _, b := range row {
+			switch {
+			case b.Text == "":
+				return errInvalid("button text is required")
+			case (b.Data == "") == (b.URL == ""):
+				return errInvalid("button %q needs exactly one of data or url", b.Text)
+			case len(b.Data) > 64:
+				return errInvalid("button %q: data is longer than 64 bytes", b.Text)
+			case b.URL != "":
+				u, err := url.Parse(b.URL)
+				if err != nil || (u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "tg") {
+					return errInvalid("button %q: url must be http, https or tg", b.Text)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// Edit changes a sent message's text, its buttons, or both.
+func (c *Core) Edit(ctx context.Context, accountID, id string, req model.EditRequest) (model.Message, error) {
 	if err := c.allowWrite(ctx); err != nil {
 		return model.Message{}, err
+	}
+	if req.Content == nil && req.Buttons == nil {
+		return model.Message{}, errInvalid("content or buttons is required")
 	}
 	_, ad, err := c.connected(ctx, accountID)
 	if err != nil {
 		return model.Message{}, err
 	}
 	ed, ok := ad.(adapter.Editor)
-	if !ok || !ad.Info().Has(adapter.CapEdit) {
+	if !ok {
 		return model.Message{}, errUnsupported(adapter.CapEdit)
+	}
+	if req.Content != nil {
+		if err := requireCap(ad, accountID, adapter.CapEdit); err != nil {
+			return model.Message{}, err
+		}
+		if req.Content.Type != model.ContentText || req.Content.Text == "" {
+			return model.Message{}, errInvalid("edit requires text content")
+		}
+	}
+	if req.Buttons != nil {
+		if err := requireCap(ad, accountID, adapter.CapButtons); err != nil {
+			return model.Message{}, err
+		}
+		if err := checkButtons(*req.Buttons); err != nil {
+			return model.Message{}, err
+		}
 	}
 	m, err := c.st.FindMessage(ctx, accountID, id)
 	if errors.Is(err, store.ErrNotFound) {
@@ -354,19 +416,31 @@ func (c *Core) Edit(ctx context.Context, accountID, id string, content model.Con
 	if !m.FromMe {
 		return model.Message{}, errInvalid("only own messages can be edited")
 	}
-	if content.Type != model.ContentText || content.Text == "" {
-		return model.Message{}, errInvalid("edit requires text content")
+	// The adapter gets the full result: platforms drop a keyboard an edit does not repeat.
+	next := m.Content
+	if req.Content != nil {
+		next.Text, next.Format = req.Content.Text, req.Content.Format
 	}
-	if _, err := ed.EditMessage(ctx, accountID, m.ChatID, m.ID, content); err != nil {
+	if req.Buttons != nil {
+		if !captioned[m.Content.Type] {
+			return model.Message{}, errInvalid("buttons are not allowed on %s", m.Content.Type)
+		}
+		next.Buttons = nil
+		if len(*req.Buttons) > 0 {
+			next.Buttons = *req.Buttons
+		}
+	}
+	if _, err := ed.EditMessage(ctx, accountID, m.ChatID, m.ID, next); err != nil {
 		return model.Message{}, err
 	}
 	now := time.Now().UTC()
 	var out model.Message
 	err = c.tx(ctx, func(tx *store.Store) error {
 		upd, err := tx.UpdateMessage(ctx, m.Seq(), func(mm *model.Message) {
-			mm.Content.Text = content.Text
-			mm.Content.Format = content.Format
-			mm.EditedAt = &now
+			mm.Content.Text, mm.Content.Format, mm.Content.Buttons = next.Text, next.Format, next.Buttons
+			if req.Content != nil {
+				mm.EditedAt = &now
+			}
 		})
 		if err != nil {
 			return err
@@ -387,7 +461,7 @@ func (c *Core) Delete(ctx context.Context, accountID, id string) (model.Message,
 		return model.Message{}, err
 	}
 	del, ok := ad.(adapter.Deleter)
-	if !ok || !ad.Info().Has(adapter.CapDelete) {
+	if !ok || !can(ad, accountID, adapter.CapDelete) {
 		return model.Message{}, errUnsupported(adapter.CapDelete)
 	}
 	m, err := c.st.FindMessage(ctx, accountID, id)
@@ -429,7 +503,7 @@ func (c *Core) React(ctx context.Context, accountID, id, emoji string, remove bo
 		return err
 	}
 	re, ok := ad.(adapter.Reactor)
-	if !ok || !ad.Info().Has(adapter.CapReaction) {
+	if !ok || !can(ad, accountID, adapter.CapReaction) {
 		return errUnsupported(adapter.CapReaction)
 	}
 	m, err := c.st.FindMessage(ctx, accountID, id)

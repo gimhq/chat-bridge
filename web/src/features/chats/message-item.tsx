@@ -1,6 +1,6 @@
-import type { Message } from '@/shared/api/types'
+import type { InlineButton, Message } from '@/shared/api/types'
 import { Link } from '@tanstack/react-router'
-import { CheckCheckIcon, CheckIcon, ForwardIcon, MapPinIcon, PhoneIcon, ReplyIcon, SmilePlusIcon, Trash2Icon, VideoIcon } from 'lucide-react'
+import { CheckCheckIcon, CheckIcon, ExternalLinkIcon, ForwardIcon, MapPinIcon, PhoneIcon, ReplyIcon, SmilePlusIcon, Trash2Icon, VideoIcon } from 'lucide-react'
 import { toast } from 'sonner'
 import { useMessageActions } from '@/shared/api/queries'
 import { Button } from '@/shared/components/ui/button'
@@ -92,6 +92,7 @@ export function MessageItem({ accountId, message: m, replyTarget, showSender, ca
           )}
         </div>
       </div>
+      {c.buttons && c.buttons.length > 0 && <InlineButtons rows={c.buttons} />}
       {m.reactions?.length > 0 && (
         <div className="flex flex-wrap gap-1 px-1">
           {groupReactions(m.reactions).map(r => (
@@ -114,6 +115,50 @@ export function MessageItem({ accountId, message: m, replyTarget, showSender, ca
         {m.edited_at && ' · 已编辑'}
         {m.from_me && (m.status === 'read' ? <CheckCheckIcon className="size-3 text-success" aria-label="已读" /> : m.status === 'delivered' ? <CheckCheckIcon className="size-3" aria-label="已送达" /> : m.status === 'sent' ? <CheckIcon className="size-3" aria-label="已发送" /> : m.status === 'failed' ? <span className="text-destructive">发送失败</span> : null)}
       </span>
+    </div>
+  )
+}
+
+const buttonKey = (b: InlineButton) => `${b.text}/${b.data ?? b.url ?? ''}`
+
+/** Inbound keyboards come from the platform: only http, https and tg links become links. */
+function safeUrl(u?: string) {
+  if (!u)
+    return false
+  try {
+    return ['http:', 'https:', 'tg:'].includes(new URL(u).protocol)
+  }
+  catch {
+    return false
+  }
+}
+
+/** Read-only keyboard: URL buttons open the link; data buttons are pressed by the recipient, not here. */
+function InlineButtons({ rows }: { rows: InlineButton[][] }) {
+  return (
+    <div className="flex w-full min-w-48 flex-col gap-1">
+      {rows.map(row => (
+        <div key={row.map(buttonKey).join('|')} className="flex gap-1">
+          {row.map(b => safeUrl(b.url)
+            ? (
+                <a
+                  key={buttonKey(b)}
+                  href={b.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex flex-1 items-center justify-center gap-1 rounded-md border bg-background px-2 py-1 text-xs hover:bg-muted"
+                >
+                  {b.text}
+                  <ExternalLinkIcon className="size-3" aria-hidden />
+                </a>
+              )
+            : (
+                <button key={buttonKey(b)} type="button" disabled title={b.data ?? b.url} className="flex-1 rounded-md border bg-background px-2 py-1 text-xs disabled:cursor-default">
+                  {b.text}
+                </button>
+              ))}
+        </div>
+      ))}
     </div>
   )
 }

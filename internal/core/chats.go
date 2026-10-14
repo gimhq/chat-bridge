@@ -58,7 +58,7 @@ func (c *Core) GetChat(ctx context.Context, accountID, chatID string) (model.Cha
 	if err != nil {
 		return model.Chat{}, err
 	}
-	if ad.Info().Has(adapter.CapChatMembers) && ch.Kind == model.ChatGroup {
+	if can(ad, accountID, adapter.CapChatMembers) && ch.Kind == model.ChatGroup {
 		members, err := c.st.ListMembers(ctx, accountID, chatID)
 		if err != nil {
 			return model.Chat{}, err
@@ -110,7 +110,7 @@ func (c *Core) ResolveChat(ctx context.Context, accountID, handle string) (model
 		return model.ResolvedChat{}, err
 	}
 	r, ok := ad.(adapter.Resolver)
-	if !ok || !ad.Info().Has(adapter.CapChatResolve) {
+	if !ok || !can(ad, accountID, adapter.CapChatResolve) {
 		return model.ResolvedChat{}, errUnsupported(adapter.CapChatResolve)
 	}
 	if handle == "" {
@@ -154,7 +154,7 @@ func (c *Core) MarkRead(ctx context.Context, accountID, chatID, upTo string) err
 		return err
 	}
 	rd, ok := ad.(adapter.Reader)
-	if !ok || !ad.Info().Has(adapter.CapChatRead) {
+	if !ok || !can(ad, accountID, adapter.CapChatRead) {
 		return errUnsupported(adapter.CapChatRead)
 	}
 	var target store.Stored
@@ -202,7 +202,7 @@ func (c *Core) Typing(ctx context.Context, accountID, chatID, state string) erro
 		return err
 	}
 	t, ok := ad.(adapter.Typer)
-	if !ok || !ad.Info().Has(adapter.CapChatTyping) {
+	if !ok || !can(ad, accountID, adapter.CapChatTyping) {
 		return errUnsupported(adapter.CapChatTyping)
 	}
 	if state != "typing" && state != "paused" {
@@ -265,7 +265,7 @@ func (c *Core) CreateChat(ctx context.Context, accountID string, req adapter.Cre
 		return model.Chat{}, err
 	}
 	cr, ok := ad.(adapter.ChatCreator)
-	if !ok || !ad.Info().Has(adapter.CapChatCreate) {
+	if !ok || !can(ad, accountID, adapter.CapChatCreate) {
 		return model.Chat{}, errUnsupported(adapter.CapChatCreate)
 	}
 	if req.Kind == "" {

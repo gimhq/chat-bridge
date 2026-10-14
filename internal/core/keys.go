@@ -15,7 +15,7 @@ func (c *Core) keyManager(ctx context.Context, accountID string) (adapter.KeyMan
 		return nil, err
 	}
 	km, ok := ad.(adapter.KeyManager)
-	if !ok || !ad.Info().Has(adapter.CapKeys) {
+	if !ok || !can(ad, accountID, adapter.CapKeys) {
 		return nil, errUnsupported(adapter.CapKeys) // capability first: a WhatsApp account never has keys to manage
 	}
 	if row.Status != model.StatusConnected {

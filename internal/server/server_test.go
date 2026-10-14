@@ -32,7 +32,7 @@ type env struct {
 	core *core.Core
 }
 
-func newEnv(t *testing.T) *env {
+func newEnv(t *testing.T, opts ...func(*core.Options)) *env {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(context.Background(), filepath.Join(dir, "b.db"))
@@ -41,7 +41,11 @@ func newEnv(t *testing.T) *env {
 	}
 	blobs, _ := media.Open(filepath.Join(dir, "media"))
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	c := core.New(core.Options{Store: st, Blobs: blobs, DataDir: dir, Logger: log})
+	o := core.Options{Store: st, Blobs: blobs, DataDir: dir, Logger: log}
+	for _, f := range opts {
+		f(&o)
+	}
+	c := core.New(o)
 	f := fake.New()
 	c.Register(f)
 	if err := c.Start(context.Background()); err != nil {

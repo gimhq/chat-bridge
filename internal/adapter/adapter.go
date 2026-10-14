@@ -37,6 +37,7 @@ const (
 	CapSelfUpdate   = "self.update"
 	CapContactAlias = "contact.alias"
 	CapKeys         = "keys.manage"
+	CapButtons      = "message.buttons"
 )
 
 // Error codes an adapter returns; the core maps them to HTTP statuses.
@@ -99,6 +100,12 @@ func (i Info) Has(capability string) bool {
 	return false
 }
 
+// AccountCapabilities lets an adapter declare a different capability set for one account (a
+// Telegram bot account can do less than a user account). Nil means Info().Capabilities.
+type AccountCapabilities interface {
+	AccountCapabilities(id string) []string
+}
+
 // Status is what an adapter reports about one account.
 type Status struct {
 	Status string
@@ -121,6 +128,8 @@ const (
 	EvPresence      = "presence"
 	EvPlatform      = "platform_event"
 	EvRequest       = "request"
+	// EvButton: a user pressed an inline button (message.buttons).
+	EvButton = "button"
 	// EvIdentity: the platform now addresses the user or direct chat UserID as NewID (WhatsApp
 	// phone number → LID). The core moves everything stored under the old id.
 	EvIdentity = "identity"
@@ -166,6 +175,11 @@ type Event struct {
 
 	// identity: UserID is the old id.
 	NewID string
+
+	// button: ChatID, MessageID, UserID, Sender hint, At, plus the button's Data and the
+	// platform's id for the press.
+	Data    string
+	PressID string
 }
 
 // Request is an invite, join request, or call waiting for the owner. Key is stable per account
@@ -262,7 +276,8 @@ type Resolver interface {
 	ResolveChat(ctx context.Context, id, handle string) (model.ResolvedChat, error)
 }
 
-// Editor edits sent messages (message.edit).
+// Editor edits sent messages (message.edit, and message.buttons for the keyboard). c is the
+// message's full new content: text and format, and Buttons as the complete keyboard (nil: none).
 type Editor interface {
 	EditMessage(ctx context.Context, id, chatID, msgID string, c model.Content) (model.Message, error)
 }
@@ -280,6 +295,12 @@ type Reactor interface {
 // Reader sends read receipts (chat.read) for messages by senderID.
 type Reader interface {
 	MarkRead(ctx context.Context, id, chatID string, messageIDs []string, senderID string) error
+}
+
+// PressAnswerer answers a button press (message.buttons): text is shown to the user, as an alert
+// when alert is set; empty text only stops the client's progress indicator.
+type PressAnswerer interface {
+	AnswerPress(ctx context.Context, id, pressID, text string, alert bool) error
 }
 
 // KeyManager exposes end-to-end encryption key management (keys.manage).

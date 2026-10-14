@@ -132,6 +132,14 @@ export interface Content {
   call?: { kind: string, state: string, duration_s?: number }
   system?: { kind: string, actor?: string, targets?: string[], value?: string }
   unsupported?: { platform_type: string }
+  buttons?: InlineButton[][]
+}
+
+/** An inline button: `data` comes back in a `message.button` event, `url` is opened by the client. */
+export interface InlineButton {
+  text: string
+  data?: string
+  url?: string
 }
 
 export interface Reaction {

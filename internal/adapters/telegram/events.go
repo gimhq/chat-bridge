@@ -28,6 +28,7 @@ type remoteRef struct {
 func (acc *account) wireHandlers() {
 	d := acc.dispatcher
 	acc.wireRequestHandlers(d)
+	acc.wireBotHandlers(d)
 	d.OnNewMessage(func(ctx context.Context, e tg.Entities, u *tg.UpdateNewMessage) error {
 		acc.applyEntities(ctx, e)
 		acc.rep.Events(acc.convertMessage(u.Message, e, false)...)
@@ -331,6 +332,7 @@ func convertContent(m *tg.Message, mediaID string) model.Content {
 	}
 	c := convertMedia(m, text, mediaID)
 	c.Format = format
+	c.Buttons = inlineButtons(m.ReplyMarkup)
 	return c
 }
 

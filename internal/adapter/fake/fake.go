@@ -27,6 +27,12 @@ type Adapter struct {
 
 	Instance string
 	Keys     bool // advertise keys.manage
+	Buttons  bool // advertise message.buttons
+	// AccountCaps overrides the capability set per account.
+	AccountCaps map[string][]string
+	Edits       []model.Content
+	// Presses records "<press>:<text>:<alert>" per AnswerPress.
+	Presses  []string
 	verified bool
 	Sent     []adapter.SendRequest
 	Reacted  []string
@@ -60,6 +66,9 @@ func (a *Adapter) Info() adapter.Info {
 		adapter.CapChatCreate, adapter.CapHistory, adapter.CapSelfUpdate}
 	if a.Keys {
 		caps = append(caps, adapter.CapKeys)
+	}
+	if a.Buttons {
+		caps = append(caps, adapter.CapButtons)
 	}
 	return adapter.Info{
 		Platform: Platform, Instance: a.Instance, Name: "Fake", Version: "test",
@@ -206,9 +215,34 @@ func (a *Adapter) ResolveChat(_ context.Context, _, handle string) (model.Resolv
 	return model.ResolvedChat{ChatID: id, Kind: model.ChatDirect, UserID: id}, nil
 }
 
-// EditMessage echoes the new content.
+// EditMessage records and echoes the new content.
 func (a *Adapter) EditMessage(_ context.Context, _, chatID, msgID string, c model.Content) (model.Message, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.Edits = append(a.Edits, c)
 	return model.Message{ID: msgID, ChatID: chatID, Content: c}, nil
+}
+
+// AccountCapabilities returns AccountCaps[id], nil when unset.
+func (a *Adapter) AccountCapabilities(id string) []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.AccountCaps[id]
+}
+
+// AnswerPress records the answer in Presses.
+func (a *Adapter) AnswerPress(_ context.Context, _, pressID, text string, alert bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.Presses = append(a.Presses, fmt.Sprintf("%s:%s:%t", pressID, text, alert))
+	return nil
+}
+
+// AnsweredPresses returns a copy of Presses.
+func (a *Adapter) AnsweredPresses() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.Presses...)
 }
 
 // DeleteMessage records the message id in Deleted.

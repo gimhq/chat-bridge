@@ -122,6 +122,9 @@ type wireEvent struct {
 	Request *wireRequest `json:"request,omitempty"`
 
 	NewID string `json:"new_id,omitempty"`
+
+	Data    string `json:"data,omitempty"`
+	PressID string `json:"press_id,omitempty"`
 }
 
 // wireRequest is the `request` event payload (adapter-protocol.md §5.3).
@@ -147,7 +150,7 @@ type wireRequest struct {
 func (w wireEvent) decode() (adapter.Event, error) {
 	ev := adapter.Event{Kind: w.Kind, ChatID: w.ChatID, MessageID: w.MessageID, MessageIDs: w.MessageIDs, Content: w.Content,
 		Emoji: w.Emoji, Removed: w.Removed, Receipt: w.Receipt, State: w.State, LastSeen: w.LastSeen, Contact: w.Contact,
-		PlatformType: w.PlatformType, Raw: w.Raw, Chat: w.Chat, Sender: w.Sender, Backfill: w.Backfill}
+		PlatformType: w.PlatformType, Raw: w.Raw, Chat: w.Chat, Sender: w.Sender, Backfill: w.Backfill, Data: w.Data, PressID: w.PressID}
 	ev.UserID = w.UserID
 	if ev.UserID == "" {
 		ev.UserID = w.SenderID
@@ -212,6 +215,10 @@ func (w wireEvent) decode() (adapter.Event, error) {
 			return ev, fmt.Errorf("identity event needs user_id and new_id")
 		}
 		ev.NewID = w.NewID
+	case adapter.EvButton:
+		if w.ChatID == "" || w.PressID == "" {
+			return ev, fmt.Errorf("button event needs chat_id and press_id")
+		}
 	case adapter.EvMessageUpdate, adapter.EvMessageDelete, adapter.EvReaction, adapter.EvReceipt, adapter.EvChat,
 		adapter.EvContact, adapter.EvTyping, adapter.EvPresence, adapter.EvPlatform:
 	default:

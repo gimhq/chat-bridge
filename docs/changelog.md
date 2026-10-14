@@ -20,6 +20,21 @@ weekly, moves the direct Go dependencies to their latest versions, runs `ci.yml`
 (`ci.yml` gains `workflow_call` with a `ref`), and on success fast-forwards `main`, tags the next
 patch version and dispatches `release.yml`; on failure the bump stays on `deps/weekly`.
 
+## 2026-10-14 05:40 [progress]
+
+Task `20261014-0446-message-buttons` (plan `20261014-0456-message-buttons`): inline buttons on sent messages, and button presses as events.
+
+- Capabilities are per account: an adapter may implement `AccountCapabilities`; `Account.capabilities` and every capability check use it, `GET /platforms` keeps the union
+- Model: `content.buttons` (rows of `{text, data | url}`; `data` at most 64 bytes, `url` http/https/tg) on text and captioned media; capability `message.buttons`; `422 unsupported` without it
+- `PATCH /accounts/{a}/messages/{msg}` takes `{content?, buttons?}`: `buttons` replaces the keyboard, `[]` removes it, absent keeps it; the adapter receives the full resulting content
+- Event `message.button` `{chat_id, message_id, user_id, sender, data, press_id, pressed_at}` (log only, not stored as a message); `POST /accounts/{a}/presses/{press}/answer` answers once (`409 press_answered`), and the core answers with no text after `events.press_timeout_s` (default 10 s, `CHATBRIDGE_EVENTS_PRESS_TIMEOUT_S`; `409 press_expired`); presses are held in memory
+- Tokens: scoped tokens see presses of allowed chats and answer only there; read-only tokens cannot answer presses or change buttons
+- Telegram (gotd): login flow `bot` (token from @BotFather); bot accounts advertise only what bots may call plus `message.buttons`, skip the dialog list and address book, resolve `@username` only, run the updates manager in bot mode; inline keyboards out (send, edit) and in (`content.buttons` on inbound messages); callback queries become `button` events; `messages.setBotCallbackAnswer` answers them
+- Remote adapters: `button` event kind and `press.answer` method (`docs/adapter-protocol.md`)
+- Web UI: the timeline shows inline buttons read-only; URL buttons open in a new tab
+- Acceptance with a real bot (@roytodobot, a test group) found two defects, both fixed: removing a keyboard sent an empty inline markup, which Telegram rejects (now the edit omits `reply_markup`); the UI rendered any inbound button URL as a link (now only http, https and tg)
+- Housekeeping: `docs/plan/index.md`, emptied by `81555ba`, is restored from `cbd7283` with the October plans appended; the empty `docs/plan/20261003-1745-tokens-web-ui.md` committed by `81555ba` is removed (that task kept its acceptance in the task file)
+
 ## 2026-10-06 06:11 [progress]
 
 Task `20261003-1745-tokens-web-ui` (plan of the same id): the management UI manages scoped tokens.

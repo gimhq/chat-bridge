@@ -361,18 +361,28 @@ func (h *handlers) getMessage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) editMessage(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Content model.Content `json:"content"`
-	}
+	var req model.EditRequest
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	msg, err := h.core.Edit(r.Context(), param(r, "account"), param(r, "msg"), req.Content)
+	msg, err := h.core.Edit(r.Context(), param(r, "account"), param(r, "msg"), req)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, msg)
+}
+
+func (h *handlers) answerPress(w http.ResponseWriter, r *http.Request) {
+	var req model.PressAnswer
+	if r.ContentLength != 0 && !decodeJSON(w, r, &req) {
+		return
+	}
+	if err := h.core.AnswerPress(r.Context(), param(r, "account"), param(r, "press"), req); err != nil {
+		writeErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *handlers) deleteMessage(w http.ResponseWriter, r *http.Request) {

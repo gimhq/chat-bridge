@@ -67,6 +67,9 @@ func (a *Adapter) SendMessage(ctx context.Context, accountID string, req adapter
 		return model.Message{}, base.PlatformErr("resolve", err)
 	}
 	b := message.NewSender(api).To(peer.InputPeer()).CloneBuilder()
+	if req.Content.Buttons != nil {
+		b = b.Markup(inlineMarkup(req.Content.Buttons))
+	}
 	if req.ReplyTo != "" {
 		if _, id, err := splitMessageID(req.ReplyTo); err == nil {
 			b = b.Reply(id)
@@ -137,7 +140,7 @@ func (acc *account) sendMedia(ctx context.Context, api *tg.Client, b *message.Bu
 	}
 }
 
-// EditMessage edits the text of a sent message.
+// EditMessage edits the text of a sent message and, for a bot, its inline keyboard.
 func (a *Adapter) EditMessage(ctx context.Context, accountID, chatID, msgID string, c model.Content) (model.Message, error) {
 	acc, api, err := a.online(accountID)
 	if err != nil {
@@ -151,7 +154,11 @@ func (a *Adapter) EditMessage(ctx context.Context, accountID, chatID, msgID stri
 	if err != nil {
 		return model.Message{}, err
 	}
-	if _, err := message.NewSender(api).To(peer.InputPeer()).Edit(id).StyledText(ctx, acc.styled(c.Text, c.Format)...); err != nil {
+	b := message.NewSender(api).To(peer.InputPeer()).CloneBuilder()
+	if acc.isBot() && c.Buttons != nil { // a bot's edit without reply_markup removes the keyboard
+		b = b.Markup(inlineMarkup(c.Buttons))
+	}
+	if _, err := b.Edit(id).StyledText(ctx, acc.styled(c.Text, c.Format)...); err != nil {
 		return model.Message{}, base.PlatformErr("edit", err)
 	}
 	return model.Message{ID: msgID, ChatID: chatID, Content: c}, nil
@@ -250,6 +257,8 @@ func (a *Adapter) ResolveChat(ctx context.Context, accountID, handle string) (mo
 	acc.mu.Unlock()
 	var peer peers.Peer
 	switch {
+	case strings.HasPrefix(handle, "+") && acc.isBot():
+		return model.ResolvedChat{}, adapter.Errorf(adapter.ErrInvalidTarget, "bots cannot resolve phone numbers")
 	case strings.HasPrefix(handle, "+"):
 		u, err := pm.ResolvePhone(ctx, strings.TrimPrefix(handle, "+"))
 		if err != nil {
@@ -295,6 +304,9 @@ func (a *Adapter) GetChat(ctx context.Context, accountID, chatID string) (model.
 		return model.Chat{}, adapter.Errorf(adapter.ErrInvalidTarget, "%s: %v", chatID, err)
 	}
 	ch := model.Chat{ID: chatID, Kind: kindOf(peer), Name: peer.VisibleName()}
+	if acc.isBot() {
+		return ch, nil
+	}
 	switch p := peer.(type) {
 	case peers.Chat:
 		full, err := api.MessagesGetFullChat(ctx, p.ID())
@@ -349,6 +361,9 @@ func (a *Adapter) ListContacts(ctx context.Context, accountID string) ([]model.C
 	acc, api, err := a.online(accountID)
 	if err != nil {
 		return nil, err
+	}
+	if acc.isBot() { // bots have no address book
+		return nil, nil
 	}
 	res, err := api.ContactsGetContacts(ctx, 0)
 	if err != nil {

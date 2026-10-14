@@ -71,7 +71,7 @@ func (c *Core) accountView(ctx context.Context, row store.AccountRow, full bool)
 	var schema json.RawMessage
 	if ad, err := c.resolve(row); err == nil {
 		info := ad.Info()
-		a.Capabilities = info.Capabilities
+		a.Capabilities = capsOf(ad, row.ID)
 		schema = info.ConfigSchema
 		if a.Adapter == "" {
 			a.Adapter = instanceOf(info)
@@ -450,7 +450,7 @@ func (c *Core) UpdateSelf(ctx context.Context, accountID string, p SelfPatch) (m
 		return model.Account{}, err
 	}
 	su, ok := ad.(adapter.SelfUpdater)
-	if !ok || !ad.Info().Has(adapter.CapSelfUpdate) {
+	if !ok || !can(ad, accountID, adapter.CapSelfUpdate) {
 		return model.Account{}, errUnsupported(adapter.CapSelfUpdate)
 	}
 	if p.Name == nil && p.Bio == nil && p.AvatarMediaID == "" {

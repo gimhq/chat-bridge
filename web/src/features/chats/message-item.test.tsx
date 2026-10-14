@@ -55,6 +55,27 @@ describe('messageItem', () => {
     await waitFor(() => expect(api.calls.some(c => c.method === 'DELETE')).toBe(true))
   })
 
+  it('shows inline buttons read-only and opens url buttons in a new tab', () => {
+    renderWithClient(
+      <MessageItem
+        {...props}
+        message={msg({ content: { type: 'text', text: 'Pick one', buttons: [[{ text: 'A', data: 'd:0' }, { text: 'B', data: 'd:1' }], [{ text: 'Docs', url: 'https://example.org/docs' }]] } })}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'A' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'B' })).toBeDisabled()
+    const link = screen.getByRole('link', { name: 'Docs' })
+    expect(link).toHaveAttribute('href', 'https://example.org/docs')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', 'noopener noreferrer')
+  })
+
+  it('does not turn script urls from the platform into links', () => {
+    renderWithClient(<MessageItem {...props} message={msg({ content: { type: 'text', text: 'x', buttons: [[{ text: 'Evil', url: 'javascript:alert(1)' }]] } })} />)
+    expect(screen.queryByRole('link', { name: 'Evil' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Evil' })).toBeDisabled()
+  })
+
   it('renders system, call, deleted, location and contact bodies', () => {
     const { unmount } = renderWithClient(<MessageItem {...props} message={msg({ content: { type: 'system', system: { kind: 'name_changed', value: 'Team' } } })} />)
     expect(screen.getByText(/群名改为「Team」/)).toBeInTheDocument()

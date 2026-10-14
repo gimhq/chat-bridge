@@ -40,6 +40,8 @@ type Config struct {
 	} `koanf:"media"`
 	Events struct {
 		RetentionDays int `koanf:"retention_days" validate:"min=1,max=365"`
+		// PressTimeoutS is how long a button press waits for a consumer before the bridge answers it.
+		PressTimeoutS int `koanf:"press_timeout_s" validate:"min=1,max=60"`
 	} `koanf:"events"`
 	Log struct {
 		Level string `koanf:"level" validate:"oneof=debug info warn error"`
@@ -76,6 +78,7 @@ var defaults = map[string]any{
 	"media.auto_download_max_mb": 16,
 	"media.max_upload_mb":        64,
 	"events.retention_days":      7,
+	"events.press_timeout_s":     10,
 	"log.level":                  "info",
 	"persons.auto_link_by_phone": true,
 }

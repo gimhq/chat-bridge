@@ -12,6 +12,7 @@ describe('invalidationsFor', () => {
     expect(invalidationsFor(ev('account.status', {}))).toEqual([qk.accounts, qk.account('a1'), qk.status])
     expect(invalidationsFor(ev('request.new', {}))).toEqual([qk.requests('a1'), qk.account('a1'), qk.accounts])
     expect(invalidationsFor(ev('chat.typing', {}))).toEqual([])
+    expect(invalidationsFor(ev('message.button', { chat_id: 'c1' }))).toEqual([])
     expect(invalidationsFor(ev('person.updated', { id: 'per_1' }, ''))).toEqual([qk.persons, qk.person('per_1'), qk.personMessages('per_1'), qk.suggestions])
   })
 })

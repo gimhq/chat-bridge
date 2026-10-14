@@ -50,3 +50,4 @@ Each task is a single line linking to its detail file. All detailed information 
 - [x] [**20261003-1744-token-read-only-and-resolve Scoped tokens: read-only switch; start a chat with an allowed contact**](20261003-1744-token-read-only-and-resolve.md) `P1`
 - [x] [**20261003-1745-tokens-web-ui Web UI: manage scoped tokens**](20261003-1745-tokens-web-ui.md) `P2`
 - [x] [**20261014-2219-weekly-deps-release Weekly upstream dependency update and patch release**](20261014-2219-weekly-deps-release.md) `P2`
+- [x] [**20261014-0446-message-buttons Inline buttons on sent messages, and button presses as events**](20261014-0446-message-buttons.md) `P1`

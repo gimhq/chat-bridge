@@ -65,6 +65,16 @@ rooms are end-to-end encrypted transparently; `POST /accounts/{a}/keys/verify` w
 account's recovery key cross-signs the bridge device and restores the key backup. Signal links
 as a secondary device: `{"flow":"qr"}` returns the `sgnl://linkdevice` URI to scan.
 
+A Telegram account can also be a bot (`{"flow":"bot"}`, then submit `{"fields":{"token":"…"}}` from
+@BotFather). Bot accounts can attach inline buttons to what they send; a press arrives as a
+`message.button` event and is answered with `POST /accounts/{a}/presses/{press}/answer`
+(`docs/api.md` §3.5, §4.13):
+
+```bash
+curl -s -H "$T" -H 'Content-Type: application/json' $B/accounts/tg-bot/chats/-1001234567890/messages \
+  -d '{"content":{"type":"text","text":"Deploy?","buttons":[[{"text":"Yes","data":"deploy:1"},{"text":"No","data":"deploy:0"}]]}}'
+```
+
 ## Tokens
 
 `server.token` is the admin token. Each other consumer gets its own scoped token, limited to the
@@ -84,7 +94,7 @@ The binary serves a management UI at `http://127.0.0.1:8080/ui/` (`/` redirects 
 with `server.token`; the token stays in the browser's local storage. It covers accounts (create,
 login by QR / code / password, reconnect, logout, delete, profile), chats (list, archive, mute,
 create and rename groups, search), the message timeline (media, replies, reactions, sending text
-and files, older history), contacts (alias, block), requests (accept invites, reject calls, with a
+and files, older history, inline buttons shown read-only), contacts (alias, block), requests (accept invites, reject calls, with a
 toast when one arrives), persons (one human's contacts across accounts: automatic grouping by
 phone, suggestions, merged timeline, merge and unlink), a live event log, and system status with
 scoped tokens (create with a scope picker and a read-only switch, edit, revoke) and webhooks.

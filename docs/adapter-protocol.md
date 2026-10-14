@@ -154,7 +154,7 @@ All take `{"account_id": "…", ...}`. Errors use JSON-RPC `error.code`:
 | `contact.set_alias` | `{account_id, user_id, alias}` | Contact | `contact.alias` |
 | `contact.block` | `{account_id, user_id, blocked}` | `{}` | |
 | `message.send` | `{account_id, chat_id, client_id, content, reply_to?, thread_id?, mentions?}` | Message (`id` set, `status: sent` or `pending`) | `send.*` |
-| `message.edit` | `{account_id, chat_id, message_id, content}` | Message | `message.edit` |
+| `message.edit` | `{account_id, chat_id, message_id, content}` | Message — `content` is the full result: text, format and `buttons` as the complete keyboard (absent: none) | `message.edit`, or `message.buttons` for a keyboard-only change |
 | `message.delete` | `{account_id, chat_id, message_id}` | `{}` | `message.delete` |
 | `message.react` | `{account_id, chat_id, message_id, emoji, remove}` | `{}` | `message.reaction` |
 | `media.fetch` | `{account_id, media_id, remote_ref}` | `{}` after the adapter has PUT the bytes (§7); an error marks the attachment `failed` | |
@@ -162,13 +162,15 @@ All take `{"account_id": "…", ...}`. Errors use JSON-RPC `error.code`:
 | `keys.verify` | `{account_id, recovery_key}` | `KeyVerifyResult` | `keys.manage` |
 | `keys.export` | `{account_id, passphrase}` | `{data}` (base64 of the key file) | `keys.manage` |
 | `keys.import` | `{account_id, passphrase, data}` (base64) | `{sessions_imported}` | `keys.manage` |
+| `press.answer` | `{account_id, press_id, text, alert}` | `{}` — answers a `button` event; empty `text` only stops the client's progress indicator | `message.buttons` |
 | `request.answer` | `{account_id, request_key, kind, chat_id, from_id, platform_ref, action: "accept"\|"reject", reason?}` | `{}` — `request_key` and `platform_ref` are what the adapter emitted | (none; the core offers the actions the request kind allows) |
 | `identity.resolve` | `{account_id, ids: [string]}` — every user and direct-chat id the core stores for the account | `{ids: {old: new}}` — only ids the platform now addresses differently; called after each `connected` status, the core re-IDs the result | (none; `-32601` means nothing changes) |
 
 `message.send` content arrives exactly as the consumer posted it (§3.5 of the API spec), with
 each attachment already expanded to `{media_id, mime, size, file_name, sha256}`; the adapter
 fetches bytes from `media.get_url`. `format: markdown` is the common subset; an adapter converts
-to its platform's markup or strips it — it never returns `unsupported` for markdown.
+to its platform's markup or strips it — it never returns `unsupported` for markdown. `content.buttons`
+(API §3.5) is present only when the adapter advertises `message.buttons`; the core has validated it.
 
 ## 5. Adapter → core methods
 
@@ -205,6 +207,7 @@ on one connection is preserved per account.
   {"kind": "request", "request": {"key": "call:42", "kind": "call", "from": {"id": "…", "name": "…"}, "chat": {"id": "…"}, "call_kind": "voice", "platform_ref": {…}}},
   {"kind": "request", "request": {"key": "call:42", "kind": "call", "state": "expired"}},
   {"kind": "identity", "user_id": "4915100000000@s.whatsapp.net", "new_id": "235978975346820@lid"},
+  {"kind": "button", "chat_id": "…", "message_id": "…", "user_id": "…", "sender": { Contact, optional }, "data": "d:ev1:0", "press_id": "…", "ts": "…"},
   {"kind": "typing", "chat_id": "…", "user_id": "…", "state": "typing"},
   {"kind": "presence", "user_id": "…", "state": "online", "last_seen": null},
   {"kind": "platform_event", "platform_type": "updateBotStopped", "chat_id": null, "user_id": "…", "raw": {…}}
@@ -255,6 +258,15 @@ first sighting is already terminal is ignored, and a terminal request is only re
 later `created_at` (a new invite to the same room). `platform_ref` is opaque JSON the adapter needs
 to answer; the core hands it back in `request.answer`. A `request` event without `key` or `kind`
 is rejected with `-32602`.
+
+#### `button` events
+
+`{"kind": "button", chat_id, message_id, user_id, sender?, data, press_id, ts?}` reports a press on
+an inline button the account sent (`message.buttons`). `data` is the button's `data` as sent;
+`press_id` is the platform's id for the press, handed back in `press.answer`. The core logs a
+`message.button` event, does not store a message, and calls `press.answer` with empty text if no
+consumer answers within `events.press_timeout_s` (default 10 s). A `button` event without `chat_id` or `press_id` is rejected with
+`-32602`.
 
 ### 5.4 `media.ready` / `media.failed`
 
@@ -363,6 +375,8 @@ type Adapter interface {
 //   KeyManager  KeysStatus / KeysVerify / KeysExport / KeysImport                        [keys.manage]
 //   RequestAnswerer AnswerRequest(ctx, id, RequestAnswer{Kind, Key, ChatID, FromID, PlatformRef, Action, Reason}) error (none)
 //   IdentityResolver CanonicalIDs(ctx, id, ids) (map[old]new, error)                    (none)
+//   PressAnswerer AnswerPress(ctx, id, pressID, text, alert) error                       [message.buttons]
+//   AccountCapabilities AccountCapabilities(id) []string — per-account capability set; nil = Info()
 
 // Sink is what the core hands the adapter; every method is durable when it returns.
 type Sink interface {
@@ -374,7 +388,9 @@ type Sink interface {
 ```
 
 Optional capabilities are separate interfaces the core type-asserts (listed above);
-`Info().Capabilities` must agree with what is implemented. Interfaces without a capability
+`Info().Capabilities` must agree with what is implemented. An adapter whose accounts differ (a
+Telegram bot account versus a user account) implements `AccountCapabilities`; `Info()` then lists
+the union. Remote adapters declare one set at `hello` for all their accounts. Interfaces without a capability
 (`ChatUpdater`, `Blocker`, `RequestAnswerer`, `IdentityResolver`) are used whenever present and answer `422 unsupported` otherwise.
 
 The remote-adapter shim implements `Adapter` by forwarding to JSON-RPC and implements `Sink`
