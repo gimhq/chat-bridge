@@ -1,6 +1,6 @@
 # 20261014-2219-weekly-deps-release Weekly upstream dependency update and patch release
 
-- **status**: implementing
+- **status**: completed
 - **createdAt**: 2026-10-14 22:19
 - **approvedAt**: 2026-10-14 22:19
 - **relatedTask**: 20261014-2219-weekly-deps-release

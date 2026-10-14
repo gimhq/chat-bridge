@@ -1,6 +1,6 @@
 # 20261014-2219-weekly-deps-release Weekly upstream dependency update and patch release
 
-- **status**: in_progress
+- **status**: completed
 - **priority**: P2
 - **owner**: gimhq-a3/a4cf95
 - **createdAt**: 2026-10-14 22:19
@@ -33,3 +33,5 @@ Adding the weekly dependency workflow
 ## Notes
 
 Full tier (CI config, dependencies, release). Plan: `docs/plan/20261014-2219-weekly-deps-release.md`.
+
+- complete: deps.yml dispatched on main: no-change path verified (run 38649912466). v0.1.1 released from the bumped main. The bump-and-release path runs for the first time on the next upstream change.
