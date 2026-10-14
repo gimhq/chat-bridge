@@ -8,7 +8,7 @@
 #   CGO_LDFLAGS="-L$PWD/.tmp/libsignal" go build -tags goolm,signal ./...
 set -euo pipefail
 
-VERSION="${MAUTRIX_SIGNAL_VERSION:-v0.2608.0}"
+VERSION="${MAUTRIX_SIGNAL_VERSION:-v0.2609.0}"
 IMAGE="${LIBSIGNAL_IMAGE:-rust:1-bookworm}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUT="$ROOT/.tmp/libsignal"

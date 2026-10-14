@@ -16,13 +16,13 @@ require (
 	github.com/knadh/koanf/providers/file v1.2.1
 	github.com/knadh/koanf/v2 v2.3.6
 	github.com/rs/zerolog v1.35.1
-	go.mau.fi/mautrix-signal v0.2608.0
-	go.mau.fi/mautrix-telegram v0.2608.0
+	go.mau.fi/mautrix-signal v0.2609.0
+	go.mau.fi/mautrix-telegram v0.2609.0
 	go.mau.fi/util v0.10.1
 	go.mau.fi/whatsmeow v0.0.0-20261014094007-f16f9ca30d6a
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
-	maunium.net/go/mautrix v0.30.0
+	maunium.net/go/mautrix v0.31.0
 	modernc.org/sqlite v1.58.0
 )
 
@@ -74,7 +74,7 @@ require (
 	github.com/tidwall/pretty v1.2.1 // indirect
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/vektah/gqlparser/v2 v2.5.27 // indirect
-	github.com/yuin/goldmark v1.8.5 // indirect
+	github.com/yuin/goldmark v1.8.6 // indirect
 	go.mau.fi/libsignal v0.2.2 // indirect
 	go.mau.fi/webp v0.3.0 // indirect
 	go.mau.fi/zeroconfig v0.2.0 // indirect
@@ -88,13 +88,15 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/crypto v0.57.0 // indirect
 	golang.org/x/exp v0.0.0-20260908205506-85c1c2202aba // indirect
-	golang.org/x/image v0.45.0 // indirect
+	golang.org/x/image v0.46.0 // indirect
 	golang.org/x/mod v0.41.0 // indirect
 	golang.org/x/net v0.59.0 // indirect
 	golang.org/x/sync v0.23.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 	golang.org/x/tools v0.50.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	google.golang.org/grpc v1.83.2 // indirect
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	modernc.org/libc v1.75.6 // indirect

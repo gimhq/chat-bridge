@@ -4,7 +4,7 @@
 # The Signal adapter hosts mautrix-signal's connector, which links libsignal through cgo. The
 # Rust half is built here once per MAUTRIX_SIGNAL_VERSION and cached as a layer.
 FROM rust:1-alpine AS libsignal
-ARG MAUTRIX_SIGNAL_VERSION=v0.2608.0
+ARG MAUTRIX_SIGNAL_VERSION=v0.2609.0
 RUN apk add --no-cache git make cmake protoc musl-dev g++ clang-dev protobuf-dev
 WORKDIR /build
 RUN git clone --depth 1 --branch "${MAUTRIX_SIGNAL_VERSION}" https://github.com/mautrix/signal.git . \
