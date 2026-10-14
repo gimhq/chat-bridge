@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-10-14 22:40 [progress]
+
+Task `20261003-1806-dependency-bumps`: every direct Go dependency on its latest version.
+
+- whatsmeow 2026-09-09 → 2026-10-14 (`UpdateBlocklist` gained a `dhash` argument; passed empty),
+  mautrix-go v0.31.0, mautrix-signal and mautrix-telegram v0.2609.0 (libsignal v0.102.2;
+  `MAUTRIX_SIGNAL_VERSION` in the Dockerfile and `build-libsignal.sh` moved with them), gotd/td
+  v0.162.0, go.mau.fi/util v0.10.1, chi v5.5.0, validator v10.30.5, koanf v2.3.8,
+  modernc.org/sqlite v1.60.1
+- gotd/td v0.162.0 replaces the inline keyboard types (`KeyboardInlineButton` with a `Type`); code
+  written against v0.161.0 keyboards has to move to them
+- Verified: gofmt, vet, golangci-lint, race tests, build, `tgbridge` line, tidy, and
+  `docker build --target test .` with every tag. Not done: the live login and message round trip
+  per platform from the task's acceptance
+
+Task `20261014-2219-weekly-deps-release` (plan of the same id): `.github/workflows/deps.yml` runs
+weekly, moves the direct Go dependencies to their latest versions, runs `ci.yml` on the result
+(`ci.yml` gains `workflow_call` with a `ref`), and on success fast-forwards `main`, tags the next
+patch version and dispatches `release.yml`; on failure the bump stays on `deps/weekly`.
+
 ## 2026-10-06 06:11 [progress]
 
 Task `20261003-1745-tokens-web-ui` (plan of the same id): the management UI manages scoped tokens.

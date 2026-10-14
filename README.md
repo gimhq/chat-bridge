@@ -150,6 +150,11 @@ of the Docker build. `task check` (`Taskfile.yml`) runs the Go gates in order, `
 `.github/workflows/ci.yml` runs all of the above on every push to `main` and every pull request:
 the web UI gate, the Go gates with the `tgbridge` line, and the Docker `test` stage for `signal`.
 
+`.github/workflows/deps.yml` runs every Monday (or by hand): it moves every direct Go dependency to
+its latest version, keeps `MAUTRIX_SIGNAL_VERSION` in step with `go.mau.fi/mautrix-signal`, and
+runs `ci.yml` on the result. When the gates pass, the commit goes to `main`, is tagged with the next
+patch version and released through `release.yml`; when they fail, it stays on `deps/weekly`.
+
 ## Documentation
 
 - [HTTP API](docs/api.md)

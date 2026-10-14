@@ -1,0 +1,87 @@
+name: Weekly dependency update
+
+# Moves every direct Go dependency to its latest version and runs the CI gates on the result.
+# When they pass, the commit is pushed to main, tagged with the next patch version and released;
+# when they fail, it stays on the deps/weekly branch for someone to fix.
+on:
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deps
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Bump direct dependencies
+        id: bump
+        run: |
+          direct='{{if not (or .Main .Indirect)}}{{.Path}} {{.Version}}{{end}}'
+          before=$(go list -m -f "$direct" all | sort)
+          echo "$before" | awk '{print $1 "@upgrade"}' | xargs go get
+          go mod tidy
+          after=$(go list -m -f "$direct" all | sort)
+
+          # libsignal is built from the mautrix-signal checkout of the same version.
+          signal=$(go list -m -f '{{.Version}}' go.mau.fi/mautrix-signal)
+          sed -i "s/^ARG MAUTRIX_SIGNAL_VERSION=.*/ARG MAUTRIX_SIGNAL_VERSION=$signal/" Dockerfile
+          sed -i "s/MAUTRIX_SIGNAL_VERSION:-[^}]*/MAUTRIX_SIGNAL_VERSION:-$signal/" scripts/build-libsignal.sh
+
+          if git diff --quiet; then
+            echo 'No dependency changes.'
+            exit 0
+          fi
+          changes=$(join <(echo "$before") <(echo "$after") | awk '$2 != $3 {print "- " $1 " " $2 " -> " $3}')
+          echo "$changes" | tee -a "$GITHUB_STEP_SUMMARY"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -qam 'chore(deps): weekly update of Go dependencies' -m "$changes"
+          git push -f origin HEAD:refs/heads/deps/weekly
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+  ci:
+    needs: bump
+    if: needs.bump.outputs.sha != ''
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.bump.outputs.sha }}
+
+  release:
+    needs: [bump, ci]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      # Tags pushed with GITHUB_TOKEN start no workflow, so release.yml is dispatched on the tag.
+      - name: Push to main, tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.bump.outputs.sha }}
+        run: |
+          git fetch -q origin deps/weekly
+          git push origin "$SHA:refs/heads/main"
+          last=$(git tag -l 'v*' --sort=-v:refname | grep -v -- - | head -1)
+          next=$(echo "${last:-v0.0.0}" | awk -F. '{print $1 "." $2 "." $3 + 1}')
+          git tag "$next" "$SHA"
+          git push origin "$next"
+          git push origin --delete deps/weekly
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref "$next"
+          echo "Released $next" >> "$GITHUB_STEP_SUMMARY"

@@ -1,8 +1,8 @@
 # 20261003-1806-dependency-bumps Bump direct Go dependencies to their latest releases
 
-- **status**: pending
+- **status**: in_progress
 - **priority**: P2
-- **owner**: (unassigned)
+- **owner**: gimhq-a3/a4cf95
 - **createdAt**: 2026-10-03 18:06
 
 ## Description
@@ -34,4 +34,7 @@ Bumping Go dependencies
 
 ## Notes
 
-(none)
+- progress (2026-10-14): all direct modules bumped in five `chore(deps)` commits (whatsmeow;
+  mautrix-go, mautrix-signal, mautrix-telegram with `MAUTRIX_SIGNAL_VERSION`; gotd/td; chi,
+  validator, koanf; sqlite). Go gate, race tests, `tgbridge` line, tidy and the Docker `test`
+  stage pass. Open: the live round trip per platform needs real accounts.
