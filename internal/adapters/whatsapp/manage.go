@@ -89,7 +89,7 @@ func (a *Adapter) Block(ctx context.Context, id, userID string, blocked bool) er
 	if blocked {
 		action = events.BlocklistChangeActionBlock
 	}
-	if _, err := acc.cli.UpdateBlocklist(ctx, jid.ToNonAD(), action); err != nil {
+	if _, err := acc.cli.UpdateBlocklist(ctx, jid.ToNonAD(), action, ""); err != nil {
 		return base.PlatformErr("blocklist", err)
 	}
 	return nil
