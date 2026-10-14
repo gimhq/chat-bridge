@@ -6,15 +6,15 @@ toolchain go1.27.1
 
 require (
 	github.com/coder/websocket v1.8.15
-	github.com/go-chi/chi/v5 v5.3.2
-	github.com/go-playground/validator/v10 v10.30.4
+	github.com/go-chi/chi/v5 v5.5.0
+	github.com/go-playground/validator/v10 v10.30.5
 	github.com/google/uuid v1.6.0
 	github.com/gotd/td v0.162.0
 	github.com/knadh/koanf/parsers/yaml v1.1.1
 	github.com/knadh/koanf/providers/confmap v1.0.1
-	github.com/knadh/koanf/providers/env/v2 v2.0.1
+	github.com/knadh/koanf/providers/env/v2 v2.0.2
 	github.com/knadh/koanf/providers/file v1.2.1
-	github.com/knadh/koanf/v2 v2.3.6
+	github.com/knadh/koanf/v2 v2.3.8
 	github.com/rs/zerolog v1.35.1
 	go.mau.fi/mautrix-signal v0.2609.0
 	go.mau.fi/mautrix-telegram v0.2609.0
