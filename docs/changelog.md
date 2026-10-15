@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-15 13:10 [progress]
+
+Telegram inline keyboards moved to gotd/td v0.162.0: `inlineMarkup` and `inlineButtons` build and
+read `KeyboardInlineButton` with an `InlineButtonTypeCallback` or `InlineButtonTypeURL` type; other
+types are still skipped on the way in.
+
 ## 2026-10-14 22:40 [progress]
 
 Task `20261003-1806-dependency-bumps`: every direct Go dependency on its latest version.

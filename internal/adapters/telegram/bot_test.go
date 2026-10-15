@@ -20,10 +20,10 @@ import (
 func TestInlineMarkupRoundTrip(t *testing.T) {
 	rows := [][]model.Button{{{Text: "A", Data: "d:ev1:0"}, {Text: "B", Data: "d:ev1:1"}}, {{Text: "Docs", URL: "https://example.org"}}}
 	kb := inlineMarkup(rows)
-	if cb, ok := kb.Rows[0].Buttons[0].(*tg.KeyboardButtonCallback); !ok || string(cb.Data) != "d:ev1:0" {
+	if cb, ok := kb.Rows[0].Buttons[0].Type.(*tg.InlineButtonTypeCallback); !ok || string(cb.Data) != "d:ev1:0" || kb.Rows[0].Buttons[0].Text != "A" {
 		t.Fatalf("callback button: %#v", kb.Rows[0].Buttons[0])
 	}
-	if u, ok := kb.Rows[1].Buttons[0].(*tg.KeyboardButtonURL); !ok || u.URL != "https://example.org" {
+	if u, ok := kb.Rows[1].Buttons[0].Type.(*tg.InlineButtonTypeURL); !ok || u.URL != "https://example.org" {
 		t.Fatalf("url button: %#v", kb.Rows[1].Buttons[0])
 	}
 	if got := inlineButtons(kb); !reflect.DeepEqual(got, rows) {
@@ -32,7 +32,7 @@ func TestInlineMarkupRoundTrip(t *testing.T) {
 	if inlineButtons(&tg.ReplyKeyboardHide{}) != nil {
 		t.Fatal("non-inline markup mapped to buttons")
 	}
-	mixed := &tg.ReplyInlineMarkup{Rows: []tg.KeyboardButtonRow{{Buttons: []tg.KeyboardButtonClass{&tg.KeyboardButtonSwitchInline{Text: "s"}}}}}
+	mixed := &tg.ReplyInlineMarkup{Rows: []tg.KeyboardInlineButtonRow{{Buttons: []tg.KeyboardInlineButton{{Text: "s", Type: &tg.InlineButtonTypeSwitchInline{}}}}}}
 	if inlineButtons(mixed) != nil {
 		t.Fatal("unsupported button kinds must be skipped")
 	}

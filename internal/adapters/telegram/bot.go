@@ -88,13 +88,13 @@ func (acc *account) loginBot(ctx context.Context, token string) model.LoginStep 
 func inlineMarkup(rows [][]model.Button) *tg.ReplyInlineMarkup {
 	kb := &tg.ReplyInlineMarkup{}
 	for _, row := range rows {
-		var r tg.KeyboardButtonRow
+		var r tg.KeyboardInlineButtonRow
 		for _, b := range row {
+			var t tg.InlineButtonTypeClass = &tg.InlineButtonTypeCallback{Data: []byte(b.Data)}
 			if b.URL != "" {
-				r.Buttons = append(r.Buttons, &tg.KeyboardButtonURL{Text: b.Text, URL: b.URL})
-			} else {
-				r.Buttons = append(r.Buttons, &tg.KeyboardButtonCallback{Text: b.Text, Data: []byte(b.Data)})
+				t = &tg.InlineButtonTypeURL{URL: b.URL}
 			}
+			r.Buttons = append(r.Buttons, tg.KeyboardInlineButton{Text: b.Text, Type: t})
 		}
 		kb.Rows = append(kb.Rows, r)
 	}
@@ -111,11 +111,11 @@ func inlineButtons(rm tg.ReplyMarkupClass) [][]model.Button {
 	for _, r := range kb.Rows {
 		var row []model.Button
 		for _, b := range r.Buttons {
-			switch v := b.(type) {
-			case *tg.KeyboardButtonCallback:
-				row = append(row, model.Button{Text: v.Text, Data: string(v.Data)})
-			case *tg.KeyboardButtonURL:
-				row = append(row, model.Button{Text: v.Text, URL: v.URL})
+			switch v := b.Type.(type) {
+			case *tg.InlineButtonTypeCallback:
+				row = append(row, model.Button{Text: b.Text, Data: string(v.Data)})
+			case *tg.InlineButtonTypeURL:
+				row = append(row, model.Button{Text: b.Text, URL: v.URL})
 			}
 		}
 		if len(row) > 0 {
