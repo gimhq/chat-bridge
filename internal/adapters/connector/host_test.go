@@ -32,6 +32,9 @@ type fakeNet struct {
 	mu     sync.Mutex
 	login  *bridgev2.UserLogin
 	sent   []*event.MessageEventContent
+	// connectDelay makes Connect report its state from a goroutine after the delay, like a
+	// connector that connects in the background.
+	connectDelay time.Duration
 }
 
 func (f *fakeNet) Init(br *bridgev2.Bridge)           { f.bridge = br }
@@ -111,6 +114,13 @@ type fakeAPI struct {
 }
 
 func (a *fakeAPI) Connect(context.Context) {
+	if d := a.net.connectDelay; d > 0 {
+		go func() {
+			time.Sleep(d)
+			a.login.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
+		}()
+		return
+	}
 	a.login.BridgeState.Send(status.BridgeState{StateEvent: status.StateConnected})
 }
 func (a *fakeAPI) Disconnect()                                            {}
@@ -151,9 +161,16 @@ type recSink struct {
 	status []adapter.Status
 	steps  []model.LoginStep
 	events []adapter.Event
+	// slow delays recording a status of this kind, widening the window between a report being
+	// decided and it reaching the sink.
+	slow      string
+	slowDelay time.Duration
 }
 
 func (r *recSink) Status(_ context.Context, _ string, st adapter.Status) error {
+	if st.Status != "" && st.Status == r.slow {
+		time.Sleep(r.slowDelay)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.status = append(r.status, st)
@@ -296,6 +313,48 @@ func TestHostedConnectorRoundTrip(t *testing.T) {
 	}
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
 		t.Fatal("account dir not removed")
+	}
+}
+
+// A stored login's "connecting" fallback must not land after the connector's own "connected"
+// state when the two race on restart.
+func TestRestartFallbackDoesNotOverrideConnected(t *testing.T) {
+	ctx := context.Background()
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	dir := t.TempDir()
+	fake := &fakeNet{}
+	host := New(log, "fakenet", func() bridgev2.NetworkConnector { return fake })
+	_ = host.Start(ctx, &recSink{})
+	if err := host.AddAccount(ctx, "acc1", nil, dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.LoginStart(ctx, "acc1", "phone"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := host.LoginSubmit(ctx, "acc1", map[string]string{"phone": "+1"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := host.Stop(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// "connected" arrives while the fallback "connecting" is still on its way to the sink.
+	fake2 := &fakeNet{connectDelay: 50 * time.Millisecond}
+	host2 := New(log, "fakenet", func() bridgev2.NetworkConnector { return fake2 })
+	sink2 := &recSink{slow: model.StatusConnecting, slowDelay: 300 * time.Millisecond}
+	_ = host2.Start(ctx, sink2)
+	if err := host2.AddAccount(ctx, "acc1", nil, dir); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = host2.Stop(ctx) })
+	eventually(t, func() bool {
+		sink2.mu.Lock()
+		defer sink2.mu.Unlock()
+		return len(sink2.status) >= 2
+	})
+	time.Sleep(100 * time.Millisecond)
+	if got := sink2.lastStatus(); got != model.StatusConnected {
+		t.Fatalf("last status %q, want %q (statuses: %+v)", got, model.StatusConnected, sink2.status)
 	}
 }
 

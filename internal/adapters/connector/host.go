@@ -589,6 +589,8 @@ type account struct {
 	raw    *sql.DB
 	user   *bridgev2.User
 
+	statusMu sync.Mutex // serialises status reports, so the start() fallback cannot land after a bridge state
+
 	mu       sync.Mutex
 	ul       *bridgev2.UserLogin
 	reported bool // a bridge state reached the sink (guards the post-start fallback)
@@ -658,7 +660,10 @@ func (acc *account) start(ctx context.Context) error {
 		ul := logins[0]
 		// StartLogins already connected the client and its bridge state may have been reported
 		// (bridgeStatus resolves the login by id, so Self was attached). Only fill the gap when
-		// nothing was reported yet; never overwrite a state the queue delivered meanwhile.
+		// nothing was reported yet; never overwrite a state the queue delivered meanwhile. The
+		// check and the report hold statusMu so a state delivered in between waits for it.
+		acc.statusMu.Lock()
+		defer acc.statusMu.Unlock()
 		acc.mu.Lock()
 		acc.ul = ul
 		silent := !acc.reported
@@ -933,6 +938,8 @@ func (acc *account) resolveSend(evtID id.EventID, ok bool, err error) {
 
 // bridgeStatus maps bridgev2 state events onto account statuses.
 func (acc *account) bridgeStatus(st *status.BridgeState) {
+	acc.statusMu.Lock()
+	defer acc.statusMu.Unlock()
 	acc.mu.Lock()
 	acc.reported = true
 	if acc.ul == nil && st.RemoteID != "" { // states sent while StartLogins runs, before start() saw the login
